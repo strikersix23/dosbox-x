@@ -40,6 +40,10 @@
 #include "setup.h"
 #include "menu.h"
 
+#if C_EMSCRIPTEN
+# include <emscripten.h>
+#endif
+
 #include <map>
 
 std::map<std::string,std::string> pending_string_binds;
@@ -2408,6 +2412,9 @@ public:
         case MK_kpminus:
             key=SDL_SCANCODE_KP_MINUS;
             break;
+        case MK_kpplus:
+            key=SDL_SCANCODE_KP_PLUS;
+            break;
         case MK_minus:
             key=SDL_SCANCODE_MINUS;
             break;
@@ -2686,8 +2693,10 @@ extern void GFX_UpdateDisplayDimensions(int width, int height);
 #endif
 
 static void DrawButtons(void) {
+#if defined(C_SDL2)
+    SDL_FillRect(mapper.draw_surface,0,0);
+#else
     SDL_FillRect(mapper.surface,0,0);
-#if !defined(C_SDL2)
     SDL_LockSurface(mapper.surface);
 #endif
     for (CButton_it but_it = buttons.begin();but_it!=buttons.end();but_it++) {
@@ -3533,15 +3542,9 @@ void Mapper_FingerInputEvent(SDL_Event &event) {
     memset(&ev,0,sizeof(ev));
     ev.type = SDL_MOUSEBUTTONUP;
 
-#if defined(WIN32)
     /* NTS: Windows versions of SDL2 do normalize the coordinates */
     ev.button.x = (Sint32)(event.tfinger.x * mapper.surface->w);
     ev.button.y = (Sint32)(event.tfinger.y * mapper.surface->h);
-#else
-    /* NTS: Linux versions of SDL2 don't normalize the coordinates? */
-    ev.button.x = event.tfinger.x;     /* Contrary to SDL_events.h the x/y coordinates are NOT normalized to 0...1 */
-    ev.button.y = event.tfinger.y;     /* Contrary to SDL_events.h the x/y coordinates are NOT normalized to 0...1 */
-#endif
 
     Mapper_MouseInputEvent(ev);
 }
@@ -3555,7 +3558,15 @@ void BIND_MappingEvents(void) {
     if (GUI_JoystickCount()>0) SDL_JoystickUpdate();
     MAPPER_UpdateJoysticks();
 
+#if C_EMSCRIPTEN
+    emscripten_sleep_with_yield(0);
+#endif
+
     while (SDL_PollEvent(&event)) {
+#if C_EMSCRIPTEN
+        emscripten_sleep_with_yield(0);
+#endif
+
         switch (event.type) {
 #if defined(C_SDL2)
         case SDL_FINGERUP:
@@ -3841,6 +3852,8 @@ void MAPPER_RunInternal() {
     /* Be sure that there is no update in progress */
     GFX_EndUpdate( 0 );
 #if defined(C_SDL2)
+    void GFX_SetResizeable(bool enable);
+    GFX_SetResizeable(false);
     mapper.window=GFX_SetSDLSurfaceWindow(640,480);
     if (mapper.window == NULL) E_Exit("Could not initialize video mode for mapper: %s",SDL_GetError());
     mapper.surface=SDL_GetWindowSurface(mapper.window);
@@ -3854,7 +3867,7 @@ void MAPPER_RunInternal() {
     SDL_SetPaletteColors(sdl2_map_pal_ptr, map_pal, 0, 6);
     SDL_SetSurfacePalette(mapper.draw_surface, sdl2_map_pal_ptr);
     if (last_clicked) {
-        last_clicked->BindColor();
+        last_clicked->SetColor(CLR_WHITE);
         last_clicked=NULL;
     }
 #else
@@ -3876,12 +3889,16 @@ void MAPPER_RunInternal() {
     SDL_JoystickEventState(SDL_ENABLE);
 #endif
     while (!mapper.exit) {
+#if C_EMSCRIPTEN
+        emscripten_sleep_with_yield(0);
+#endif
+
         if (mapper.redraw) {
             mapper.redraw=false;        
             DrawButtons();
         } else {
 #if defined(C_SDL2)
-            SDL_UpdateWindowSurface(mapper.window);
+//            SDL_UpdateWindowSurface(mapper.window);
 #endif
         }
         BIND_MappingEvents();
@@ -3891,15 +3908,13 @@ void MAPPER_RunInternal() {
     SDL_FreeSurface(mapper.draw_surface);
     SDL_FreeSurface(mapper.draw_surface_nonpaletted);
     SDL_FreePalette(sdl2_map_pal_ptr);
+    GFX_SetResizeable(true);
 #endif
 #if defined (REDUCE_JOYSTICK_POLLING)
     SDL_JoystickEventState(SDL_DISABLE);
 #endif
     if((mousetoggle && !mouselocked) || (!mousetoggle && mouselocked)) GFX_CaptureMouse();
     SDL_ShowCursor(cursor);
-#if defined(__WIN32__) && !defined(C_SDL2)
-    GUI_Shortcut(0);
-#endif
 #if !defined(C_SDL2)
     DOSBox_RefreshMenu();
 #endif
@@ -4020,6 +4035,8 @@ void MAPPER_StartUp() {
         /* Note: table has to be tested/updated for various OSs */
 #if defined (MACOSX)
         /* nothing */
+#elif defined(HAIKU)
+		usescancodes = false;
 #elif defined(OS2)
         sdlkey_map[0x61]=SDLK_UP;
         sdlkey_map[0x66]=SDLK_DOWN;
