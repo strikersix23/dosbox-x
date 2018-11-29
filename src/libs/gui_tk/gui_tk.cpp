@@ -595,14 +595,29 @@ Window::Window() :
 	x(0), y(0),
 	dirty(false),
 	visible(true),
+    tabbable(true),
 	parent(NULL),
-	mouseChild(NULL)
+	mouseChild(NULL),
+    transient(false),
+    toplevel(false),
+    mouse_in_window(false)
 {
 }
 
 
 Window::~Window()
 {
+    // WARNING: Child windows will call parent->removeChild() each child we delete here.
+    //          That means the list is modified per call, therefore it's not safe to
+    //          blindly iterate over the children list.
+    //
+    //          Furthermore, modifying the code so that removeChild() does nothing during
+    //          the destructor, and then iterating over the children list normally and
+    //          deleting the child windows, works OK except for a segfault when the user
+    //          uses the "Close" menu item from the system menu.
+    //
+    //          This code is a good framework for the GUI but a knotted mess when it comes
+    //          to pointer ownership and when things are valid.
 	while (!children.empty()) delete children.front();
 	if (parent) parent->removeChild(this);
 	if (parent && parent->mouseChild == this) parent->mouseChild = NULL;
