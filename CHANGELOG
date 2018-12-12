@@ -1,3 +1,37 @@
+0.82.13 (next)
+  - Windows builds (compiled with VS2017) now have working
+    MT32 (Munt) emulation.
+  - Adjusting CPU cycles with F12 + - / F12 + + (Increment
+    and Decrement Cycles shortcuts) now updates cpu cycles
+    property. This fixes a problem where adjusting the cycle
+    count then changing the CPU core caused DOSBox-X to reset
+    the cycle count back to the original value.
+  - Linux/X11 support fixed not to assume XRandR extensions
+    are present, but to instead ask the X11 server first.
+  - Simple scaler rendering has altered the RENDER start line
+    state so that detection of a changed line triggers a block
+    of rendering without compare within a limited count before
+    checking again. This means a reduced CPU load with scalers
+    because it only detects frame changes every line before
+    changes detected, and then on average every 12th line
+    when running the scaler code. Hopefully this helps the
+    Raspberry Pi keep up with DOS gaming better.
+  - Simple scalers now offer compile-time (not run-time)
+    option to omit per-pixel compare in scaler and process
+    the entire scanline instead as a performance adjustment
+    for slower and embedded systems.
+  - Video debug menu added. First item is one that blanks the
+    display to test screen updating.
+  - Simple scalers (normal 2x-5x and SAI) revised to process
+    changes and scaler rendering in larger blocks for possible
+    performance improvement.
+  - Simple scalers fixed to properly compare all pixels to
+    detect changes properly, instead of only the first 4-8
+    pixels.
+  - EGA/VGA text rendering combined to reduce code copypasta
+    and reduce bugs.
+  - VGA 16-color planar modes now obey CRTC byte/word/dword
+    bits.
 0.82.12
   - MinGW HX DOS builds fixed to accept mouse input properly
     even beyond the 640x480 of the original SDL window

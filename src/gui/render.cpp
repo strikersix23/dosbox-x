@@ -131,7 +131,25 @@ extern bool				sse2_available;
 #endif
 /*END HACK*/
 
-static void RENDER_StartLineHandler(const void * s) {
+/* NTS: In normal conditions, the renderer at the start of the frame
+ *      does not call the scaler but instead compares line by line
+ *      from the cache. The instant a line differs, it switches to
+ *      running the scaler for the rest of the frame and the scaler
+ *      will compare pixels and process only those pixel groups that
+ *      changed, and then send the scanline to the changed lines
+ *      list.
+ *
+ *      If C_SCALER_FULL_LINE, the scaler will blindly process pixels
+ *      without comparing to detect changes. This code changes to
+ *      let the scaler blast pixels at least for some scan lines
+ *      before switching back to comparing scan lines to determine
+ *      whether more scaler processing is needed.
+ *
+ *      The intent of C_SCALER_FULL_LINE is to process the scalers
+ *      in a way more appropriate for embedded systems where memory
+ *      and video bandwidth are more limited. */
+
+static inline bool RENDER_DrawLine_scanline_cacheHit(const void *s) {
     if (s) {
         const Bitu *src = (Bitu*)s;
         Bitu *cache = (Bitu*)(render.scale.cacheRead);
@@ -161,19 +179,67 @@ static void RENDER_StartLineHandler(const void * s) {
         }
     }
 /* cacheHit */
-    render.scale.cacheRead += render.scale.cachePitch;
-    Scaler_ChangedLines[0] += Scaler_Aspect[ render.scale.inLine ];
-    render.scale.inLine++;
-    render.scale.outLine++;
-    return;
+    return true;
 cacheMiss:
-    if (!GFX_StartUpdate( render.scale.outWrite, render.scale.outPitch )) {
-        RENDER_DrawLine = RENDER_EmptyLineHandler;
-        return;
+    return false;
+}
+
+#if defined(C_SCALER_FULL_LINE)
+static unsigned int RENDER_scaler_countdown = 0;
+static const unsigned int RENDER_scaler_countdown_init = 12;
+
+static INLINE void cn_ScalerAddLines( Bitu changed, Bitu count ) {
+	if ((Scaler_ChangedLineIndex & 1) == changed ) {
+		Scaler_ChangedLines[Scaler_ChangedLineIndex] += count;
+	} else {
+		Scaler_ChangedLines[++Scaler_ChangedLineIndex] = count;
+	}
+	render.scale.outWrite += render.scale.outPitch * count;
+}
+
+static void RENDER_DrawLine_countdown(const void * s);
+
+static void RENDER_DrawLine_countdown_wait(const void * s) {
+    if (RENDER_DrawLine_scanline_cacheHit(s)) { // line has not changed
+        render.scale.inLine++;
+        render.scale.cacheRead += render.scale.cachePitch;
+        cn_ScalerAddLines(0,Scaler_Aspect[ render.scale.outLine++ ]);
     }
-    render.scale.outWrite += render.scale.outPitch * Scaler_ChangedLines[0];
-    RENDER_DrawLine = render.scale.lineHandler;
-    RENDER_DrawLine( s );
+    else {
+        RENDER_scaler_countdown = RENDER_scaler_countdown_init;
+        RENDER_DrawLine = RENDER_DrawLine_countdown;
+        RENDER_DrawLine( s );
+    }
+}
+
+static void RENDER_DrawLine_countdown(const void * s) {
+    render.scale.lineHandler(s);
+    if (--RENDER_scaler_countdown == 0)
+        RENDER_DrawLine = RENDER_DrawLine_countdown_wait;
+}
+#endif
+
+static void RENDER_StartLineHandler(const void * s) {
+    if (RENDER_DrawLine_scanline_cacheHit(s)) { // line has not changed
+        render.scale.cacheRead += render.scale.cachePitch;
+        Scaler_ChangedLines[0] += Scaler_Aspect[ render.scale.inLine ];
+        render.scale.inLine++;
+        render.scale.outLine++;
+    }
+    else {
+        if (!GFX_StartUpdate( render.scale.outWrite, render.scale.outPitch )) {
+            RENDER_DrawLine = RENDER_EmptyLineHandler;
+            return;
+        }
+        render.scale.outWrite += render.scale.outPitch * Scaler_ChangedLines[0];
+#if defined(C_SCALER_FULL_LINE)
+        RENDER_scaler_countdown = RENDER_scaler_countdown_init;
+        RENDER_DrawLine = RENDER_DrawLine_countdown;
+#else
+        RENDER_DrawLine = render.scale.lineHandler;
+#endif
+        RENDER_DrawLine( s );
+    }
 }
 
 static void RENDER_FinishLineHandler(const void * s) {
@@ -707,6 +773,12 @@ void RENDER_SetSize(Bitu width,Bitu height,Bitu bpp,float fps,double scrn_ratio)
     RENDER_Reset( );
 }
 
+void BlankDisplay(void);
+static void BlankTestRefresh(bool pressed) {
+    (void)pressed;
+    BlankDisplay();
+}
+
 //extern void GFX_SetTitle(Bit32s cycles, Bits frameskip, Bits timing, bool paused);
 static void IncreaseFrameSkip(bool pressed) {
     if (!pressed)
@@ -956,6 +1028,9 @@ void RENDER_Init() {
 
     MAPPER_AddHandler(DecreaseFrameSkip,MK_nothing,0,"decfskip","Dec Fskip");
     MAPPER_AddHandler(IncreaseFrameSkip,MK_nothing,0,"incfskip","Inc Fskip");
+
+    // DEBUG option
+    MAPPER_AddHandler(BlankTestRefresh,MK_nothing,0,"blankrefreshtest","RefrshTest");
 
     GFX_SetTitle(-1,(Bits)render.frameskip.max,-1,false);
 
