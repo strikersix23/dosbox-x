@@ -37,6 +37,8 @@
 # define INCL_WIN
 #endif
 
+extern bool dpi_aware_enable;
+
 bool OpenGL_using(void);
 void GFX_OpenGLRedrawScreen(void);
 
@@ -851,7 +853,8 @@ SDL_Window* GFX_SetSDLWindowMode(Bit16u width, Bit16u height, SCREEN_TYPES scree
                                       width, height,
                                       (GFX_IsFullscreen() ? (sdl.desktop.full.display_res ? SDL_WINDOW_FULLSCREEN_DESKTOP : SDL_WINDOW_FULLSCREEN) : 0)
                                       | ((screenType == SCREEN_OPENGL) ? SDL_WINDOW_OPENGL : 0) | SDL_WINDOW_SHOWN
-                                      | (SDL2_resize_enable ? SDL_WINDOW_RESIZABLE : 0));
+                                      | (SDL2_resize_enable ? SDL_WINDOW_RESIZABLE : 0)
+                                      | (dpi_aware_enable ? SDL_WINDOW_ALLOW_HIGHDPI : 0));
         if (sdl.window) {
             GFX_SetTitle(-1, -1, -1, false); //refresh title.
         }
@@ -1607,6 +1610,12 @@ Bitu GFX_SetSize(Bitu width, Bitu height, Bitu flags, double scalex, double scal
     if (!sdl.mouse.autoenable)
         SDL_ShowCursor(sdl.mouse.autolock?SDL_DISABLE:SDL_ENABLE);
 
+#if defined(MACOSX) && !defined(C_SDL2)
+    /* RGBA order changes between surface and OpenGL, refresh palette */
+    void VGA_DAC_UpdateColorPalette();
+    VGA_DAC_UpdateColorPalette();
+#endif
+
     UpdateWindowDimensions();
 
     return retFlags;
@@ -2207,6 +2216,12 @@ void change_output(int output) {
 
     GFX_SetTitle(CPU_CycleMax,-1,-1,false);
     GFX_LogSDLState();
+
+#if defined(MACOSX) && !defined(C_SDL2)
+    /* RGBA order changes between surface and OpenGL, refresh palette */
+    void VGA_DAC_UpdateColorPalette();
+    VGA_DAC_UpdateColorPalette();
+#endif
 
     UpdateWindowDimensions();
 }
@@ -5857,6 +5872,9 @@ bool DOSBOX_parse_argv() {
             if (!control->cmdline->NextOptArgv(tmp)) return false;
             control->opt_c.push_back(tmp);
         }
+        else if (optname == "alt-vga") {
+            control->opt_alt_vga_render = true;
+        }
         else if (optname == "log-con") {
             control->opt_log_con = true;
         }
@@ -6069,8 +6087,6 @@ void FDC_Primary_Init();
 void AUTOEXEC_Init();
 
 #if defined(WIN32)
-extern bool dpi_aware_enable;
-
 // NTS: I intend to add code that not only indicates High DPI awareness but also queries the monitor DPI
 //      and then factor the DPI into DOSBox's scaler and UI decisions.
 void Windows_DPI_Awareness_Init() {
@@ -6736,6 +6752,9 @@ extern "C" void sdl1_hax_set_topmost(unsigned char topmost);
 #if defined(MACOSX) && !defined(C_SDL2)
 extern "C" void sdl1_hax_set_topmost(unsigned char topmost);
 #endif
+#if defined(MACOSX) && !defined(C_SDL2)
+extern "C" void sdl1_hax_macosx_highdpi_set_enable(const bool enable);
+#endif
 
 void toggle_always_on_top(void) {
     bool cur = is_always_on_top();
@@ -6778,6 +6797,24 @@ bool alwaysontop_menu_callback(DOSBoxMenu * const menu, DOSBoxMenu::item * const
     (void)menuitem;//UNUSED
     toggle_always_on_top();
     mainMenu.get_item("alwaysontop").check(is_always_on_top()).refresh_item(mainMenu);
+    return true;
+}
+
+bool highdpienable_menu_callback(DOSBoxMenu * const menu, DOSBoxMenu::item * const menuitem) {
+    void RENDER_CallBack( GFX_CallBackFunctions_t function );
+
+    (void)menu;//UNUSED
+    (void)menuitem;//UNUSED
+
+#if defined(MACOSX) && !defined(C_SDL2)
+    dpi_aware_enable = !dpi_aware_enable;
+    if (!control->opt_disable_dpi_awareness) {
+        sdl1_hax_macosx_highdpi_set_enable(dpi_aware_enable);
+        RENDER_CallBack(GFX_CallBackReset);
+    }
+#endif
+
+    mainMenu.get_item("highdpienable").check(dpi_aware_enable).refresh_item(mainMenu);
     return true;
 }
 
@@ -6874,6 +6911,80 @@ bool custom_bios = false;
 int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
     CommandLine com_line(argc,argv);
     Config myconf(&com_line);
+
+#if 0 /* VGA_Draw_2 self test: dot clock */
+    {
+        const double start_time = 0;
+        signed long long count = 0;
+        VGA_Draw_2 t;
+
+        fprintf(stderr,"VGA_Draw_2: 1000Hz\n");
+
+        t.dotclock.set_rate(1000,start_time);/*hz*/
+        for (int i=0;i < 10000;i++) {
+            t.dotclock.update(start_time + i);
+
+            if (labs(t.dotclock.ticks - (signed long long)i) > 1ll) { /* NTS: Expect possible +/- 1 error due to floating point */
+                fprintf(stderr,"* TEST FAILURE:\n");
+                fprintf(stderr,"   ticks=%lld ticks_prev=%lld\n",(signed long long)i,(signed long long)t.dotclock.ticks);
+                return 1;
+            }
+        }
+
+        t.dotclock.reset(start_time);
+        assert(t.dotclock.base == start_time);
+        assert(t.dotclock.ticks_prev == 0);
+        assert(t.dotclock.ticks == 0);
+
+        fprintf(stderr,"VGA_Draw_2: 1000Hz incremental\n");
+
+        count = 0;
+        t.dotclock.set_rate(1000,start_time);/*hz*/
+        for (int i=0;i < 10000;i++) {
+            t.dotclock.update(start_time + i);
+            count += t.dotclock.delta_get();
+            assert(t.dotclock.ticks == t.dotclock.ticks_prev);
+
+            if (labs(count - (signed long long)i) > 1ll) { /* NTS: Expect possible +/- 1 error due to floating point */
+                fprintf(stderr,"* TEST FAILURE:\n");
+                fprintf(stderr,"   count=%lld ticks=%lld ticks_prev=%lld\n",count,(signed long long)i,(signed long long)t.dotclock.ticks);
+                return 1;
+            }
+
+            signed long long rc = t.dotclock.ticks2pic(count);
+            if (labs(rc - (signed long long)i) > 1ll) { /* NTS: Expect possible +/- 1 error due to floating point */
+                fprintf(stderr,"* TEST FAILURE:\n");
+                fprintf(stderr,"   count=%lld ticks=%lld ticks_prev=%lld rc=%lld\n",count,(signed long long)i,(signed long long)t.dotclock.ticks,rc);
+                return 1;
+            }
+        }
+
+        fprintf(stderr,"VGA_Draw_2: 1000Hz inc then 100Hz inc\n");
+
+        count = 0;
+        t.dotclock.set_rate(100,start_time + 1000);/*hz, rate change*/
+        for (int i=0;i < 10000;i++) {
+            t.dotclock.update(start_time + 1000 + (i * 10));/*1ms * 10 = 10ms = 100Hz */
+            count += t.dotclock.delta_get();
+            assert(t.dotclock.ticks == t.dotclock.ticks_prev);
+
+            if (labs(count - (signed long long)i) > 1ll) { /* NTS: Expect possible +/- 1 error due to floating point */
+                fprintf(stderr,"* TEST FAILURE:\n");
+                fprintf(stderr,"   count=%lld ticks=%lld ticks_prev=%lld\n",count,(signed long long)i,(signed long long)t.dotclock.ticks);
+                return 1;
+            }
+
+            signed long long rc = t.dotclock.ticks2pic(count);
+            if (labs(rc - ((signed long long)(i * 10) + 1000 + start_time)) > 1ll) { /* NTS: Expect possible +/- 1 error due to floating point */
+                fprintf(stderr,"* TEST FAILURE:\n");
+                fprintf(stderr,"   count=%lld ticks=%lld ticks_prev=%lld rc=%lld\n",count,(signed long long)i,(signed long long)t.dotclock.ticks,rc);
+                return 1;
+            }
+        }
+
+        return 0;
+    }
+#endif
 
 #if C_EMSCRIPTEN
     control->opt_debug = true;
@@ -7145,11 +7256,25 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
 
         sdl.init_ignore = true;
 
+	{
+		Section_prop *section = static_cast<Section_prop *>(control->GetSection("dosbox"));
+		assert(section != NULL);
+
+		// boot-time option whether or not to report ourself as "DPI aware" to Windows so the
+		// DWM doesn't upscale our window for backwards compat.
+		dpi_aware_enable = section->Get_bool("dpi aware");
+	}
+
 #ifdef WIN32
         /* Windows Vista/7/8/10 DPI awareness. If we don't tell Windows we're high DPI aware, the DWM will
          * upscale our window to emulate a 96 DPI display which on high res screen will make our UI look blurry.
          * But we obey the user if they don't want us to do that. */
         Windows_DPI_Awareness_Init();
+#endif
+#if defined(MACOSX) && !defined(C_SDL2)
+	/* Our SDL1 in-tree library has a High DPI awareness function for Mac OS X now */
+        if (!control->opt_disable_dpi_awareness)
+            sdl1_hax_macosx_highdpi_set_enable(dpi_aware_enable);
 #endif
 
         /* -- SDL init */
@@ -7631,6 +7756,7 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
         mainMenu.alloc_item(DOSBoxMenu::item_type_id,"doublebuf").set_text("Double Buffering (Fullscreen)").set_callback_function(doublebuf_menu_callback).check(!!GetSetSDLValue(1, "desktop.doublebuf", 0));
         mainMenu.alloc_item(DOSBoxMenu::item_type_id,"alwaysontop").set_text("Always on top").set_callback_function(alwaysontop_menu_callback).check(is_always_on_top());
         mainMenu.alloc_item(DOSBoxMenu::item_type_id,"showdetails").set_text("Show details").set_callback_function(showdetails_menu_callback).check(!menu.hidecycles);
+        mainMenu.alloc_item(DOSBoxMenu::item_type_id,"highdpienable").set_text("High DPI enable").set_callback_function(highdpienable_menu_callback).check(dpi_aware_enable);
 
         mainMenu.get_item("mapper_blankrefreshtest").set_text("Refresh test (blank display)").set_callback_function(refreshtest_menu_callback).refresh_item(mainMenu);
 

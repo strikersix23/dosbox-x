@@ -738,10 +738,6 @@ void DOSBOX_RealInit() {
     Section_prop *section = static_cast<Section_prop *>(control->GetSection("dosbox"));
     assert(section != NULL);
 
-    // boot-time option whether or not to report ourself as "DPI aware" to Windows so the
-    // DWM doesn't upscale our window for backwards compat.
-    dpi_aware_enable = section->Get_bool("dpi aware");
-
     // TODO: allow change at any time. in fact if it were possible for DOSBox-X configuration
     //       schema code to attach event callbacks when a setting changes, we would set one
     //       on the title= setting now to auto-update the titlebar when this changes.
@@ -972,7 +968,13 @@ void DOSBOX_SetupConfigSections(void) {
     Pstring = secprop->Add_path("title",Property::Changeable::Always,"");
     Pstring->Set_help("Additional text to place in the title bar of the window");
 
+#if defined(MACOSX)
+    /* Let's make DPI aware OFF by default so Mac OS X users with Retina displays don't yell at us about eyestrain.
+       They can turn it on in combination with a nice scaler when they want it. */
+    Pbool = secprop->Add_bool("dpi aware",Property::Changeable::OnlyAtStart,false);
+#else
     Pbool = secprop->Add_bool("dpi aware",Property::Changeable::OnlyAtStart,true);
+#endif
     Pbool->Set_help("Set this option (on by default) to indicate to your OS that DOSBox is DPI aware.\n"
             "If it is not set, Windows Vista/7/8/10 and higher may upscale the DOSBox window\n"
             "on higher resolution monitors which is probably not what you want.");
@@ -1560,6 +1562,9 @@ void DOSBOX_SetupConfigSections(void) {
     Pint = secprop->Add_int("frameskip",Property::Changeable::Always,0);
     Pint->SetMinMax(0,10);
     Pint->Set_help("How many frames DOSBox skips before drawing one.");
+
+    Pbool = secprop->Add_bool("alt render",Property::Changeable::Always,false);
+    Pbool->Set_help("If set, use a new experimental rendering engine");
 
     Pstring = secprop->Add_string("aspect", Property::Changeable::Always, "false");
     Pstring->Set_values(aspectmodes);

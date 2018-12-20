@@ -47,6 +47,8 @@ static inline BOOL IS_SNOW_LEOPARD_OR_LATER(_THIS)
     return (system_version >= 0x1060);
 }
 
+extern bool sdl1_hax_highdpi_enable;
+
 static NSWindow *my_qz_window = nil;
 unsigned char wants_topmost = 0;
 
@@ -906,7 +908,11 @@ static SDL_Surface* QZ_SetVideoFullScreen (_THIS, SDL_Surface *current, int widt
         
         cg_context = CGBitmapContextCreate (current->pixels, current->w, current->h,
                         8, current->pitch, cgColorspace,
+#if SDL_BYTEORDER == SDL_LIL_ENDIAN
+                        kCGImageAlphaNoneSkipLast);
+#else
                         kCGImageAlphaNoneSkipFirst);
+#endif
         CGColorSpaceRelease (cgColorspace);
         
         current->flags |= SDL_SWSURFACE;
@@ -960,6 +966,10 @@ static SDL_Surface* QZ_SetVideoFullScreen (_THIS, SDL_Surface *current, int widt
 
     /* Set app state, hide cursor if necessary, ... */
     QZ_DoActivate(this);
+
+	[ window_view setNeedsDisplay:YES ];
+	[ [ qz_window contentView ] setNeedsDisplay:YES ];
+	[ qz_window displayIfNeeded ];
 
     return current;
 
@@ -1056,6 +1066,13 @@ static SDL_Surface* QZ_SetVideoWindowed (_THIS, SDL_Surface *current, int width,
             return NULL;
         }
 
+	/* need to convert width and height according to backing store scale (HighDPI).
+	   Sorry pre-Mac OS X 10.7.x users */
+	if (sdl1_hax_highdpi_enable)
+		contentRect = [ qz_window convertRectFromBacking:contentRect ];
+
+        [ qz_window setContentSize:contentRect.size ];
+
         my_qz_window = qz_window;
 
         /*[ qz_window setReleasedWhenClosed:YES ];*/ /* no need to set this as it's the default for NSWindows */
@@ -1079,6 +1096,9 @@ static SDL_Surface* QZ_SetVideoWindowed (_THIS, SDL_Surface *current, int width,
     }
     /* We already have a window, just change its size */
     else {
+	    if (sdl1_hax_highdpi_enable)
+		    contentRect = [ qz_window convertRectFromBacking:contentRect ];
+
         [ qz_window setContentSize:contentRect.size ];
         current->flags |= (SDL_NOFRAME|SDL_RESIZABLE) & mode_flags;
         [ window_view setFrameSize:contentRect.size ];
@@ -1126,7 +1146,11 @@ static SDL_Surface* QZ_SetVideoWindowed (_THIS, SDL_Surface *current, int width,
         
         cg_context = CGBitmapContextCreate (current->pixels, current->w, current->h,
                         8, current->pitch, cgColorspace,
+#if SDL_BYTEORDER == SDL_LIL_ENDIAN
+                        kCGImageAlphaNoneSkipLast);
+#else
                         kCGImageAlphaNoneSkipFirst);
+#endif
         CGColorSpaceRelease (cgColorspace);
         
         current->flags |= SDL_SWSURFACE;
@@ -1140,6 +1164,10 @@ static SDL_Surface* QZ_SetVideoWindowed (_THIS, SDL_Surface *current, int width,
 
     /* Save flags to ensure correct teardown */
     mode_flags = current->flags;
+
+	[ window_view setNeedsDisplay:YES ];
+	[ [ qz_window contentView ] setNeedsDisplay:YES ];
+	[ qz_window displayIfNeeded ];
 
     /* Fade in again (asynchronously) if we came from a fullscreen mode and faded to black */
     if (fade_token != kCGDisplayFadeReservationInvalidToken) {
@@ -1180,7 +1208,13 @@ static SDL_Surface* QZ_SetVideoModeInternal (_THIS, SDL_Surface *current,
 
     if (qz_window != nil) {
         nsgfx_context = [NSGraphicsContext graphicsContextWithWindow:qz_window];
-        [NSGraphicsContext setCurrentContext:nsgfx_context];
+	if (nsgfx_context != NULL) {
+        	[NSGraphicsContext setCurrentContext:nsgfx_context];
+	}
+	else {
+		/* Whoops, looks like Mojave doesn't support this anymore */
+		fprintf(stderr,"Unable to obtain graphics context for NSWindow (Mojave behavior)\n");
+	}
     }
 
     /* Setup the new pixel format */
@@ -1208,9 +1242,16 @@ static SDL_Surface* QZ_SetVideoModeInternal (_THIS, SDL_Surface *current,
                     bmask = 0x000000FF;
                 } else {
 #if SDL_BYTEORDER == SDL_LIL_ENDIAN
-                    rmask = 0x0000FF00;
-                    gmask = 0x00FF0000;
-                    bmask = 0xFF000000;
+		    if (flags & SDL_OPENGL) {
+			    rmask = 0x0000FF00;
+			    gmask = 0x00FF0000;
+			    bmask = 0xFF000000;
+		    }
+		    else {
+			    rmask = 0x000000FF;
+			    gmask = 0x0000FF00;
+			    bmask = 0x00FF0000;
+		    }
 #else
                     rmask = 0x00FF0000;
                     gmask = 0x0000FF00;
@@ -1525,22 +1566,29 @@ static void QZ_DrawResizeIcon (_THIS)
     }
 }
 
-static void QZ_UpdateRects (_THIS, int numRects, SDL_Rect *rects)
-{
+static SDL_VideoDevice *last_this = NULL;
+
+void QZ_UpdateRectsOnDrawRect(/*TODO: NSRect from drawRect*/) {
+	// HACK
+	SDL_VideoDevice *this = last_this;
+
+	if (this == NULL) return;
+
     if (SDL_VideoSurface->flags & SDL_OPENGLBLIT) {
-        QZ_GL_SwapBuffers (this);
+	// TODO?
     }
     else if ( [ qz_window isMiniaturized ] ) {
-    
         /* Do nothing if miniaturized */
     }
-    
     else {
         NSGraphicsContext *ctx = [NSGraphicsContext currentContext];
-        if (ctx != nsgfx_context) { /* uhoh, you might be rendering from another thread... */
+
+	/* NTS: nsgfx_context == NULL will occur on Mojave, may be non-NULL on older versions of OS X */
+        if (nsgfx_context != NULL && ctx != nsgfx_context) { /* uhoh, you might be rendering from another thread... */
             [NSGraphicsContext setCurrentContext:nsgfx_context];
             ctx = nsgfx_context;
         }
+
         CGContextRef cgc = (CGContextRef) [ctx graphicsPort];
         QZ_DrawResizeIcon (this);
         CGContextFlush (cg_context);
@@ -1550,6 +1598,25 @@ static void QZ_UpdateRects (_THIS, int numRects, SDL_Rect *rects)
         CGContextDrawImage (cgc, rectangle, image);
         CGImageRelease(image);
         CGContextFlush (cgc);
+    }
+}
+
+static void QZ_UpdateRects (_THIS, int numRects, SDL_Rect *rects)
+{
+	// HACK
+	last_this = this;
+
+    if (SDL_VideoSurface->flags & SDL_OPENGLBLIT) {
+        QZ_GL_SwapBuffers (this);
+	// TODO?
+    }
+    else if ( [ qz_window isMiniaturized ] ) {
+        /* Do nothing if miniaturized */
+    }
+    else {
+	[ window_view setNeedsDisplay:YES ];
+	[ [ qz_window contentView ] setNeedsDisplay:YES ];
+	[ qz_window displayIfNeeded ];
     }
 }
 

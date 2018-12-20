@@ -152,6 +152,8 @@ extern ZIPFile savestate_zip;
 
 using namespace std;
 
+bool                                vga_alt_new_mode = false;
+
 extern int                          vga_memio_delay_ns;
 extern bool                         gdc_5mhz_mode;
 extern bool                         enable_pc98_egc;
@@ -898,6 +900,7 @@ void VGA_Reset(Section*) {
     if (!IS_PC98_ARCH)
         SVGA_Setup_Driver();        // svga video memory size is set here, possibly over-riding the user's selection
 
+    // NTS: This is WHY the memory size must be a power of 2
     vga.mem.memmask = vga.mem.memsize - 1u;
 
     LOG(LOG_VGA,LOG_NORMAL)("Video RAM: %uKB",vga.mem.memsize>>10);
