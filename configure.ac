@@ -1,5 +1,5 @@
 dnl Init.
-AC_INIT(dosbox-x,0.82.13,[https://github.com/joncampbell123/dosbox-x/issues],[],[http://dosbox-x.software])
+AC_INIT(dosbox-x,0.82.15,[https://github.com/joncampbell123/dosbox-x/issues],[],[http://dosbox-x.software])
 AC_PREREQ(2.60)
 AC_CONFIG_SRCDIR(README)
 
@@ -146,7 +146,7 @@ if test x$warn_cpp0x = x1; then
 fi
 
 CFLAGS="$CFLAGS -std=gnu11";
-CXXFLAGS="$CXXFLAGS -std=gnu++0x";
+CXXFLAGS="$CXXFLAGS -std=gnu++11";
 
 dnl yksoft1 wants a MinGW build for Windows that doesn't use the Windows menu system.
 AH_TEMPLATE(C_FORCE_MENU_SDLDRAW,[Define to 1 to force SDL-drawn menus])
@@ -159,6 +159,9 @@ AC_ARG_ENABLE(hx-dos,AC_HELP_STRING([--enable-hx-dos],[Enable HX target]),enable
 dnl Let me know if you're targeting Emscripten
 AH_TEMPLATE(C_EMSCRIPTEN,[Define to 1 to target Emscripten])
 AC_ARG_ENABLE(emscripten,AC_HELP_STRING([--enable-emscripten],[Enable Emscripten target]),enable_emscripten=$enableval,enable_emscripten=no)
+
+dnl Allow disabling X11 integration if your platform doesn't support it
+AC_ARG_ENABLE(x11,AC_HELP_STRING([--disable-x11],[Don't enable X11 integration]))
 
 dnl Optimize for speed by default
 AC_ARG_ENABLE(optimize,AC_HELP_STRING([--disable-optimize],[Don't enable compiler optimizations]))
@@ -352,13 +355,15 @@ if test x$enable_emscripten != xyes; then
 dnl Some target detection and actions for them
 case "$host" in
     *-*-cygwin* | *-*-mingw32*)
-       LIBS="$LIBS -lwinmm -limm32"
+       LIBS="$LIBS -lwinmm -limm32 -lole32"
        CXXFLAGS="$CXXFLAGS -mno-ms-bitfields"
        if test x$have_sdl_net_lib = xyes -a x$have_sdl_net_h = xyes ; then
          LIBS="$LIBS -lws2_32"
        fi
        dnl FEATURE: Whether to support direct parallel port passthrough
        AC_DEFINE(C_DIRECTLPT, 1, [ Define to 1 if you want parallel passthrough support (Win32, Linux).])
+       dnl FEATURE: Whether to support direct serial port passthrough
+       AC_DEFINE(C_DIRECTSERIAL, 1, [ Define to 1 if you want serial passthrough support (Win32, Posix and OS/2).])
        ;;
     *-*-darwin*)
        dnl We have a problem here: both Mac OS X and Darwin report 
@@ -366,18 +371,23 @@ case "$host" in
        dnl to do more to distinguish them.
        dnl For now I am lazy and do not add proper detection code.
        macosx=1
-       OBJCXXFLAGS="$OBJCXXFLAGS -std=gnu++0x";
+       OBJCXXFLAGS="$OBJCXXFLAGS -std=gnu++11";
        AC_DEFINE(MACOSX, 1, [Compiling on Mac OS X])
-       LIBS="$LIBS -framework CoreMIDI -framework AudioUnit -framework AudioToolbox"
+       LIBS="$LIBS -framework Carbon -framework CoreFoundation -framework CoreMIDI -framework AudioUnit -framework AudioToolbox -framework ApplicationServices -framework AppKit"
+       dnl FEATURE: Whether to support direct serial port passthrough
+       AC_DEFINE(C_DIRECTSERIAL, 1, [ Define to 1 if you want serial passthrough support (Win32, Posix and OS/2).])
        ;;
     *-*-linux*)
        AC_DEFINE(LINUX, 1, [Compiling on GNU/Linux])
        CXXFLAGS="$CXXFLAGS -D_XOPEN_SOURCE=700 -D_POSIX_C_SOURCE=200809L"
        dnl FEATURE: Whether to support direct parallel port passthrough
        AC_DEFINE(C_DIRECTLPT, 1, [ Define to 1 if you want parallel passthrough support (Win32, Linux).])
+       dnl FEATURE: Whether to support direct serial port passthrough
+       AC_DEFINE(C_DIRECTSERIAL, 1, [ Define to 1 if you want serial passthrough support (Win32, Posix and OS/2).])
        ;;
     *-*-haiku*)
        AC_DEFINE(HAIKU, 1, [Compiling on Haiku])
+       dnl FEATURE: Whether to support direct serial port passthrough
        AC_DEFINE(C_DIRECTSERIAL, 1, [ Define to 1 if you want serial passthrough support (Win32, Posix and OS/2).])
        ;;
     *-*-freebsd* | *-*-dragonfly* | *-*-netbsd* | *-*-openbsd*)
@@ -387,9 +397,13 @@ case "$host" in
        dnl functions and headers. I currently do not know 
        dnl which ones are needed for BSD
        AC_DEFINE(BSD, 1, [Compiling on BSD])
+       dnl FEATURE: Whether to support direct serial port passthrough
+       AC_DEFINE(C_DIRECTSERIAL, 1, [ Define to 1 if you want serial passthrough support (Win32, Posix and OS/2).])
        ;;
     *-*-os2-emx*)
        AC_DEFINE(OS2, 1, [Compiling on OS/2 EMX])
+       dnl FEATURE: Whether to support direct serial port passthrough
+       AC_DEFINE(C_DIRECTSERIAL, 1, [ Define to 1 if you want serial passthrough support (Win32, Posix and OS/2).])
        ;;
 esac
 fi
@@ -517,9 +531,17 @@ dnl LIBRARY TEST: SDLnet 1.x
 AC_CHECK_HEADER(SDL_net.h,have_sdl_net_h=yes,)
 AC_CHECK_LIB(SDL_net, SDLNet_Init, have_sdl_net_lib=yes, , )
 
-if test x$enable_emscripten != xyes; then
+AC_COMPILE_IFELSE([AC_LANG_SOURCE([
+#include <SDL_config.h>
+#ifndef SDL_VIDEO_DRIVER_X11
+#error SDL_VIDEO_DRIVER_X11
+#endif
+void test(){}
+])], , enable_x11=no)
+if test x$enable_x11 != xno; then
   dnl LIBRARY TEST: X11 Xlib support
   AC_CHECK_LIB(X11, main, have_x11_lib=yes, have_x11_lib=no, )
+  AC_CHECK_LIB(Xrandr, XRRGetCrtcInfo, have_xrandr_lib=yes, have_xrandr_lib=no, )
   AC_CHECK_HEADER(X11/XKBlib.h, have_x11_h=yes, have_x11_h=no, )
 fi
 
@@ -756,9 +778,6 @@ else
   AC_MSG_RESULT(no)
 fi
 
-dnl FEATURE: Whether to support direct serial port passthrough
-AC_DEFINE(C_DIRECTSERIAL, 1, [ Define to 1 if you want serial passthrough support (Win32, Posix and OS/2).])
-
 dnl FEATURE: Whether to support SDL net, and emulate modem and IPX connections
 AH_TEMPLATE(C_SDL_NET,[Indicate whether SDL_net is present])
 AH_TEMPLATE(C_MODEM,[Define to 1 to enable internal modem support, requires SDL_net])
@@ -803,7 +822,7 @@ else
   AC_MSG_WARN([Can't find libpcap, NE2000 ethernet passthrough disabled])
 fi
 
-if test x$enable_emscripten != xyes; then
+if test x$enable_x11 != xno; then
   dnl FEATURE: Whether to use X11 XKBlib
   AH_TEMPLATE(C_X11_XKB,[define to 1 if you have XKBlib.h and X11 lib])
   AC_MSG_CHECKING(for XKBlib support)
@@ -814,13 +833,11 @@ if test x$enable_emscripten != xyes; then
   else
     AC_MSG_RESULT(no)
   fi
-fi
 
-if test x$enable_emscripten != xyes; then
   dnl FEATURE: Whether to use X11 XRandR
   AH_TEMPLATE(C_X11_XRANDR,[define to 1 if you have XRandr.h and X11 lib])
   AC_MSG_CHECKING(for XRandR support)
-  if test x$have_x11_lib = xyes -a x$have_x11_h = xyes ; then
+  if test x$have_xrandr_lib = xyes -a x$have_x11_h = xyes ; then
     LIBS="$LIBS -lXrandr"
     AC_DEFINE(C_X11_XRANDR,1)
     AC_MSG_RESULT(yes)

@@ -46,6 +46,11 @@ void GFX_OpenGLRedrawScreen(void);
 # define _GNU_SOURCE
 #endif
 
+// Tell Mac OS X to shut up about deprecated OpenGL calls
+#ifndef GL_SILENCE_DEPRECATION
+#define GL_SILENCE_DEPRECATION
+#endif
+
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -74,6 +79,16 @@ void GFX_OpenGLRedrawScreen(void);
 #include "mapper.h"
 #include "sdlmain.h"
 #include "zipfile.h"
+#include "shell.h"
+
+#if defined(WIN32) && !defined(HX_DOS)
+# include <shobjidl.h>
+#endif
+
+#if defined(WIN32) && defined(__MINGW32__) /* MinGW does not have IID_ITaskbarList3 */
+static const GUID __my_IID_ITaskbarList3 = { 0xEA1AFB91ul,0x9E28u,0x4B86u,0x90u,0xE9u,0x9Eu,0x9Fu,0x8Au,0x5Eu,0xEFu,0xAFu };
+# define IID_ITaskbarList3 __my_IID_ITaskbarList3
+#endif
 
 #if C_EMSCRIPTEN
 # include <emscripten.h>
@@ -121,6 +136,12 @@ void GFX_OpenGLRedrawScreen(void);
 #endif
 
 #include "sdlmain.h"
+
+#ifdef MACOSX
+extern bool has_touch_bar_support;
+bool osx_detect_nstouchbar(void);
+void osx_init_touchbar(void);
+#endif
 
 SDL_Block sdl;
 Bitu frames = 0;
@@ -202,6 +223,57 @@ const char *DKM_to_descriptive_string(const unsigned int dkm) {
 
     return "";
 }
+
+#if defined(WIN32) && !defined(HX_DOS)
+ITaskbarList3 *winTaskbarList = NULL;
+#endif
+
+#if defined(WIN32) && !defined(HX_DOS)
+void WindowsTaskbarUpdatePreviewRegion(void) {
+    if (winTaskbarList != NULL) {
+        /* Windows 7/8/10: Tell the taskbar which part of our window contains the DOS screen */
+        RECT r;
+
+        r.top = sdl.clip.y;
+        r.left = sdl.clip.x;
+        r.right = sdl.clip.x + sdl.clip.w;
+        r.bottom = sdl.clip.y + sdl.clip.h;
+
+        /* NTS: The MSDN documentation is misleading. Apparently, despite 30+ years of Windows SDK
+                behavior where the "client area" is the area below the menu bar and inside the frame,
+                ITaskbarList3's idea of the "client area" is the the area inside the frame INCLUDING
+                the menu bar. Why? */
+        if (GetMenu(GetHWND()) != NULL) {
+            r.top += GetSystemMetrics(SM_CYMENU);//HACK
+            r.bottom += GetSystemMetrics(SM_CYMENU);//HACK
+        }
+
+        if (winTaskbarList->SetThumbnailClip(GetHWND(), &r) != S_OK)
+            LOG_MSG("WARNING: ITaskbarList3::SetThumbnailClip() failed");
+    }
+}
+
+void WindowsTaskbarResetPreviewRegion(void) {
+    if (winTaskbarList != NULL) {
+        /* Windows 7/8/10: Tell the taskbar which part of our window contains the client area (not including the menu bar) */
+        RECT r;
+
+        GetClientRect(GetHWND(), &r);
+
+        /* NTS: The MSDN documentation is misleading. Apparently, despite 30+ years of Windows SDK
+                behavior where the "client area" is the area below the menu bar and inside the frame,
+                ITaskbarList3's idea of the "client area" is the the area inside the frame INCLUDING
+                the menu bar. Why? */
+        if (GetMenu(GetHWND()) != NULL) {
+            r.top += GetSystemMetrics(SM_CYMENU);//HACK
+            r.bottom += GetSystemMetrics(SM_CYMENU);//HACK
+        }
+
+        if (winTaskbarList->SetThumbnailClip(GetHWND(), &r) != S_OK)
+            LOG_MSG("WARNING: ITaskbarList3::SetThumbnailClip() failed");
+    }
+}
+#endif
 
 unsigned int mapper_keyboard_layout = DKM_US;
 unsigned int host_keyboard_layout = DKM_US;
@@ -402,7 +474,6 @@ void UpdateWindowDimensions(void)
 void                        GUI_ResetResize(bool);
 void                        GUI_LoadFonts();
 void                        GUI_Run(bool);
-void                        Restart(bool pressed);
 
 const char*                 titlebar = NULL;
 extern const char*              RunningProgram;
@@ -665,7 +736,7 @@ void GFX_SDL_Overscan(void) {
                 for (Bitu i=0; i<4; i++) {
                     rect = &sdl.updateRects[i];
                     Bit8u* start = pixelptr + (unsigned int)rect->y*(unsigned int)linepitch + (unsigned int)rect->x;
-                    for (Bitu j=0; j<rect->h; j++) {
+                    for (Bitu j=0; j<(unsigned int)rect->h; j++) {
                         memset(start, vga.attr.overscan_color, rect->w);
                         start += linepitch;
                     }
@@ -700,6 +771,19 @@ static bool IsFullscreen() {
 }
 #endif
 
+#if defined(MACOSX)
+bool is_paused = false;
+bool unpause_now = false;
+#endif
+
+void PushDummySDL(void) {
+    SDL_Event event;
+
+    memset(&event,0,sizeof(event));
+    event.type = SDL_KEYUP;
+    SDL_PushEvent(&event);
+}
+
 void PauseDOSBox(bool pressed) {
     bool paused = true;
     SDL_Event event;
@@ -727,7 +811,19 @@ void PauseDOSBox(bool pressed) {
     SDL_WM_GrabInput(SDL_GRAB_OFF);
 #endif
 
+#if defined(MACOSX)
+    is_paused = true;
+#endif
+
     while (paused) {
+#if defined(MACOSX)
+        if (unpause_now) {
+            unpause_now = false;
+            break;
+        }
+#endif
+
+
 #if C_EMSCRIPTEN
         emscripten_sleep_with_yield(0);
         SDL_PollEvent(&event);
@@ -737,9 +833,14 @@ void PauseDOSBox(bool pressed) {
 
 #ifdef __WIN32__
   #if DOSBOXMENU_TYPE == DOSBOXMENU_HMENU
-        if (event.type==SDL_SYSWMEVENT && event.syswm.msg->msg == WM_COMMAND && event.syswm.msg->wParam == (mainMenu.get_item("mapper_pause").get_master_id()+DOSBoxMenu::winMenuMinimumID)) {
+        if (event.type==SDL_SYSWMEVENT && event.syswm.msg->msg == WM_COMMAND && (LOWORD(event.syswm.msg->wParam) == ID_WIN_SYSMENU_PAUSE || LOWORD(event.syswm.msg->wParam) == (mainMenu.get_item("mapper_pause").get_master_id()+DOSBoxMenu::winMenuMinimumID))) {
             paused=false;
             GFX_SetTitle(-1,-1,-1,false);   
+            break;
+        }
+        if (event.type == SDL_SYSWMEVENT && event.syswm.msg->msg == WM_SYSCOMMAND && LOWORD(event.syswm.msg->wParam) == ID_WIN_SYSMENU_PAUSE) {
+            paused = false;
+            GFX_SetTitle(-1, -1, -1, false);
             break;
         }
   #endif
@@ -787,6 +888,10 @@ void PauseDOSBox(bool pressed) {
 
     /* reflect in the menu that we're paused now */
     mainMenu.get_item("mapper_pause").check(false).refresh_item(mainMenu);
+
+#if defined(MACOSX)
+    is_paused = false;
+#endif
 }
 
 #if defined(C_SDL2)
@@ -1556,7 +1661,7 @@ Bitu GFX_SetSize(Bitu width, Bitu height, Bitu flags, double scalex, double scal
         (unsigned int)flags,
         scalex,scaley);
 
-    Bitu bpp = 0;
+//    Bitu bpp = 0;
     Bitu retFlags = 0;
 
     if (sdl.blit.surface) {
@@ -1610,13 +1715,11 @@ Bitu GFX_SetSize(Bitu width, Bitu height, Bitu flags, double scalex, double scal
     if (!sdl.mouse.autoenable)
         SDL_ShowCursor(sdl.mouse.autolock?SDL_DISABLE:SDL_ENABLE);
 
-#if defined(MACOSX) && !defined(C_SDL2)
-    /* RGBA order changes between surface and OpenGL, refresh palette */
-    void VGA_DAC_UpdateColorPalette();
-    VGA_DAC_UpdateColorPalette();
-#endif
-
     UpdateWindowDimensions();
+
+#if defined(WIN32) && !defined(HX_DOS)
+    WindowsTaskbarUpdatePreviewRegion();
+#endif
 
     return retFlags;
 }
@@ -2001,6 +2104,7 @@ void CaptureMouseNotify(bool capture)
 #if WIN32
     CaptureMouseNotifyWin32(capture);
 #else
+    (void)capture;
     // TODO
 #endif
 }
@@ -2216,12 +2320,6 @@ void change_output(int output) {
 
     GFX_SetTitle(CPU_CycleMax,-1,-1,false);
     GFX_LogSDLState();
-
-#if defined(MACOSX) && !defined(C_SDL2)
-    /* RGBA order changes between surface and OpenGL, refresh palette */
-    void VGA_DAC_UpdateColorPalette();
-    VGA_DAC_UpdateColorPalette();
-#endif
 
     UpdateWindowDimensions();
 }
@@ -2521,7 +2619,13 @@ Bitu GFX_GetRGB(Bit8u red, Bit8u green, Bit8u blue) {
 
 #if C_OPENGL
         case SCREEN_OPENGL:
-            return (((unsigned int)blue << 0u) | ((unsigned int)green << 8u) | ((unsigned int)red << 16u)) | (255u << 24u);
+# if SDL_BYTEORDER == SDL_LIL_ENDIAN && defined(MACOSX) /* Mac OS X Intel builds use a weird RGBA order (alpha in the low 8 bits) */
+            //USE BGRA
+            return ((blue << 24) | (green << 16) | (red << 8)) | (255 << 0);
+# else
+            //USE ARGB
+            return ((blue << 0) | (green << 8) | (red << 16)) | (255 << 24);
+# endif
 #endif
 
 #if C_DIRECT3D
@@ -2819,8 +2923,14 @@ static void GUI_StartUp() {
         //Can only be done on the very first call! Not restartable.
         const SDL_VideoInfo* vidinfo = SDL_GetVideoInfo();
         if (vidinfo) {
+            sdl.desktop.full.width_auto = true;
             sdl.desktop.full.width = vidinfo->current_w;
+            sdl.desktop.full.height_auto = true;
             sdl.desktop.full.height = vidinfo->current_h;
+
+            LOG_MSG("SDL1 auto-detected desktop as %u x %u",
+                (unsigned int)sdl.desktop.full.width,
+                (unsigned int)sdl.desktop.full.height);
         }
     }
   #endif
@@ -2976,11 +3086,6 @@ static void GUI_StartUp() {
 
     MAPPER_AddHandler(SwitchFullScreen,MK_f,MMODHOST,"fullscr","Fullscreen", &item);
     item->set_text("Toggle fullscreen");
-
-#if !defined(C_EMSCRIPTEN)//FIXME: Shutdown causes problems with Emscripten
-    MAPPER_AddHandler(Restart,MK_nothing,0,"restart","Restart", &item); /* This is less useful, and now has no default binding */
-    item->set_text("Restart DOSBox-X");
-#endif
 
     void PasteClipboard(bool bPressed); // emendelson from dbDOS adds MMOD2 to this for Ctrl-Alt-F5 for PasteClipboard
     MAPPER_AddHandler(PasteClipboard, MK_nothing, 0, "paste", "Paste Clipboard"); //end emendelson
@@ -3449,9 +3554,9 @@ static void HandleMouseMotion(SDL_MouseMotionEvent * motion) {
     }
     else if (!user_cursor_locked)
     {
-        bool MOUSE_HasInterruptSub();
-        bool MOUSE_IsBeingPolled();
-        bool MOUSE_IsHidden();
+        extern bool MOUSE_HasInterruptSub();
+        extern bool MOUSE_IsBeingPolled();
+        extern bool MOUSE_IsHidden();
         /* Show only when DOS app is not using mouse */
 
 #if defined(C_SDL2)
@@ -3465,6 +3570,13 @@ static void HandleMouseMotion(SDL_MouseMotionEvent * motion) {
     Mouse_CursorMoved(xrel, yrel, x, y, emu);
 }
 
+#if defined(C_SDL2)
+static const SDL_TouchID no_touch_id = (SDL_TouchID)(~0ULL);
+static const SDL_FingerID no_finger_id = (SDL_FingerID)(~0ULL);
+static SDL_FingerID touchscreen_finger_lock = no_finger_id;
+static SDL_TouchID touchscreen_touch_lock = no_touch_id;
+#endif
+
 #if DOSBOXMENU_TYPE == DOSBOXMENU_SDLDRAW /* SDL drawn menus */
 void MenuFullScreenRedraw(void) {
 #if defined(C_SDL2)
@@ -3473,13 +3585,6 @@ void MenuFullScreenRedraw(void) {
     SDL_Flip(sdl.surface);
 #endif
 }
-
-#if defined(C_SDL2)
-static const SDL_TouchID no_touch_id = (SDL_TouchID)(~0ULL);
-static const SDL_FingerID no_finger_id = (SDL_FingerID)(~0ULL);
-static SDL_FingerID touchscreen_finger_lock = no_finger_id;
-static SDL_TouchID touchscreen_touch_lock = no_touch_id;
-#endif
 
 static struct {
     unsigned char*      bmp = NULL;
@@ -3658,7 +3763,7 @@ static void HandleMouseButton(SDL_MouseButtonEvent * button) {
                     if (!SDL_WaitEvent(&event)) break;
 #endif
 
-#if defined(C_SDL2)
+#if defined(C_SDL2) && !defined(IGNORE_TOUCHSCREEN)
                     switch (event.type) {
                         case SDL_FINGERDOWN:
                             if (touchscreen_finger_lock == no_finger_id &&
@@ -4497,7 +4602,7 @@ void* GetSetSDLValue(int isget, std::string target, void* setval) {
     return NULL;
 }
 
-#if defined(C_SDL2)
+#if defined(C_SDL2) && !defined(IGNORE_TOUCHSCREEN)
 static void FingerToFakeMouseMotion(SDL_TouchFingerEvent * finger) {
     SDL_MouseMotionEvent fake;
 
@@ -4641,6 +4746,19 @@ void GFX_EventsMouse()
 #endif
 }
 
+/* DOSBox SVN revision 4176:4177: For Linux/X11, Xorg 1.20.1
+ * will make spurious focus gain and loss events when locking the mouse in windowed mode.
+ *
+ * This has not been tested with DOSBox-X yet becaus I do not run Xorg 1.20.1, yet */
+#if defined(LINUX)
+#define SDL_XORG_FIX 1
+#else
+#define SDL_XORG_FIX 0
+#endif
+/* end patch fragment */
+
+bool gfx_in_mapper = false;
+
 void GFX_Events() {
     CheckMapperKeyboardLayout();
 #if defined(C_SDL2) /* SDL 2.x---------------------------------- */
@@ -4777,11 +4895,13 @@ void GFX_Events() {
             HandleMouseButton(&event.button);
 #endif
             break;
+#if !defined(IGNORE_TOUCHSCREEN)
         case SDL_FINGERDOWN:
         case SDL_FINGERUP:
         case SDL_FINGERMOTION:
             HandleTouchscreenFinger(&event.tfinger);
             break;
+#endif
         case SDL_QUIT:
             throw(0);
             break;
@@ -4798,8 +4918,10 @@ void GFX_Events() {
             }
 #endif
         default:
+            gfx_in_mapper = true;
             void MAPPER_CheckEvent(SDL_Event * event);
             MAPPER_CheckEvent(&event);
+            gfx_in_mapper = false;
         }
     }
 #else /* SDL 1.x---------------------------------- */
@@ -4824,6 +4946,24 @@ void GFX_Events() {
 #endif
 
     while (SDL_PollEvent(&event)) {
+        /* DOSBox SVN revision 4176:4177: For Linux/X11, Xorg 1.20.1
+         * will make spurious focus gain and loss events when locking the mouse in windowed mode.
+         *
+         * This has not been tested with DOSBox-X yet becaus I do not run Xorg 1.20.1, yet */
+#if SDL_XORG_FIX
+		// Special code for broken SDL with Xorg 1.20.1, where pairs of inputfocus gain and loss events are generated
+		// when locking the mouse in windowed mode.
+		if (event.type == SDL_ACTIVEEVENT && event.active.state == SDL_APPINPUTFOCUS && event.active.gain == 0) {
+			SDL_Event test; //Check if the next event would undo this one.
+			if (SDL_PeepEvents(&test,1,SDL_PEEKEVENT,SDL_ACTIVEEVENTMASK) == 1 && test.active.state == SDL_APPINPUTFOCUS && test.active.gain == 1) {
+				// Skip both events.
+				SDL_PeepEvents(&test,1,SDL_GETEVENT,SDL_ACTIVEEVENTMASK);
+				continue;
+			}
+		}
+#endif
+        /* end patch fragment */
+
         switch (event.type) {
 #ifdef __WIN32__
         case SDL_SYSWMEVENT : {
@@ -4868,6 +5008,20 @@ void GFX_Events() {
                                 mainMenu.get_item("mapper_togmenu").check(!menu.toggle).refresh_item(mainMenu);
                             }
                             break;
+#if !defined(HX_DOS)
+                        case ID_WIN_SYSMENU_MAPPER:
+                            extern void MAPPER_Run(bool pressed);
+                            MAPPER_Run(false);
+                            break;
+                        case ID_WIN_SYSMENU_CFG_GUI:
+                            extern void GUI_Run(bool pressed);
+                            GUI_Run(false);
+                            break;
+                        case ID_WIN_SYSMENU_PAUSE:
+                            extern void PauseDOSBox(bool pressed);
+                            PauseDOSBox(true);
+                            break;
+#endif
                     }
                 default:
                     break;
@@ -5350,7 +5504,20 @@ void SDL_SetupConfigSection() {
         Pstring = sdl_sec->Add_string("output", Property::Changeable::Always, isVirtualBox ? "surface" : "opengl"); /* MinGW builds do not yet have Direct3D */
 # else
         Pstring = sdl_sec->Add_string("output", Property::Changeable::Always, "direct3d");
-#endif
+# endif
+#elif defined(MACOSX) && defined(C_OPENGL) && !defined(C_SDL2)
+        /* NTS: Lately, especially on Macbooks with Retina displays, OpenGL gives better performance
+                than the CG bitmap-based "surface" output.
+
+                On my dev system, "top" shows a 20% CPU load doing 1:1 CG Bitmap output to the screen
+                on a High DPI setup, while ignoring High DPI and rendering through Cocoa at 2x size
+                pegs the CPU core DOSBox-X is running on at 100% and emulation stutters.
+
+                So for the best experience, default to OpenGL.
+
+                Note that "surface" yields good performance with SDL2 and OS X because SDL2 doesn't
+                use the CGBitmap system, it uses OpenGL or Metal underneath automatically. */
+        Pstring = sdl_sec->Add_string("output", Property::Changeable::Always, "opengl");
 #else
         Pstring = sdl_sec->Add_string("output", Property::Changeable::Always, "surface");
 #endif
@@ -5504,78 +5671,6 @@ static void launcheditor(std::string edit) {
 #if C_DEBUG
 extern void DEBUG_ShutDown(Section * /*sec*/);
 #endif
-
-void restart_program(std::vector<std::string> & parameters) {
-    char** newargs = new char* [parameters.size()+1];
-    // parameter 0 is the executable path
-    // contents of the vector follow
-    // last one is NULL
-    for(Bitu i = 0; i < parameters.size(); i++) newargs[i]=(char*)parameters[i].c_str();
-    newargs[parameters.size()] = NULL;
-    if(sdl.desktop.fullscreen) SwitchFullScreen(1);
-    putenv((char*)("SDL_VIDEODRIVER="));
-#ifndef WIN32
-    SDL_CloseAudio();
-    SDL_Delay(50);
-    SDL_Quit();
-#if C_DEBUG
-    // shutdown curses
-    DEBUG_ShutDown(NULL);
-#endif
-#endif
-
-#ifndef WIN32
-    execvp(newargs[0], newargs);
-#endif
-#ifdef __MINGW32__
-#ifdef WIN32 // if failed under win32
-    PROCESS_INFORMATION pi;
-    STARTUPINFO si; 
-    ZeroMemory(&si,sizeof(si));
-    si.cb=sizeof(si);
-    ZeroMemory(&pi,sizeof(pi));
-
-    if(CreateProcess(NULL, newargs[0], NULL, NULL, false, 0, NULL, NULL, &si, &pi)) {
-        CloseHandle( pi.hProcess );
-        CloseHandle( pi.hThread );
-        SDL_CloseAudio();
-        SDL_Delay(50);
-        throw(0);
-        SDL_Quit();
-#if C_DEBUG
-    // shutdown curses
-        DEBUG_ShutDown(NULL);
-#endif
-    }
-#endif
-#else // if not MINGW
-#ifdef WIN32
-    char newargs_temp[32767];
-    strcpy(newargs_temp, "");
-    for(Bitu i = 1; i < parameters.size(); i++) {
-        strcat(newargs_temp, " ");
-        strcat(newargs_temp, newargs[i]);
-    }
-
-    if(ShellExecute(NULL, "open", newargs[0], newargs_temp, NULL, SW_SHOW)) {
-        SDL_CloseAudio();
-        SDL_Delay(50);
-        throw(0);
-        SDL_Quit();
-#if C_DEBUG
-    // shutdown curses
-        DEBUG_ShutDown(NULL);
-#endif
-    }
-#endif
-#endif
-    free(newargs);
-}
-
-void Restart(bool pressed) { // mapper handler
-    (void)pressed;//UNUSED
-    restart_program(control->startup_params);
-}
 
 static void launchcaptures(std::string const& edit) {
     std::string path,file;
@@ -5807,7 +5902,7 @@ bool DOSBOX_parse_argv() {
         if (optname == "version") {
             DOSBox_ShowConsole();
 
-            fprintf(stderr,"\nDOSBox version %s, copyright 2002-2015 DOSBox Team.\n\n",VERSION);
+            fprintf(stderr,"\nDOSBox version %s %s, copyright 2002-2015 DOSBox Team.\n\n",VERSION,SDL_STRING);
             fprintf(stderr,"DOSBox is written by the DOSBox Team (See AUTHORS file))\n");
             fprintf(stderr,"DOSBox comes with ABSOLUTELY NO WARRANTY.  This is free software,\n");
             fprintf(stderr,"and you are welcome to redistribute it under certain conditions;\n");
@@ -5823,7 +5918,7 @@ bool DOSBOX_parse_argv() {
             DOSBox_ShowConsole();
 
             fprintf(stderr,"\ndosbox [options]\n");
-            fprintf(stderr,"\nDOSBox version %s, copyright 2002-2015 DOSBox Team.\n\n",VERSION);
+            fprintf(stderr,"\nDOSBox version %s %s, copyright 2002-2015 DOSBox Team.\n\n",VERSION,SDL_STRING);
             fprintf(stderr,"  -h     -help                            Show this help\n");
             fprintf(stderr,"  -editconf                               Launch editor\n");
             fprintf(stderr,"  -opencaptures <param>                   Launch captures\n");
@@ -6389,9 +6484,9 @@ bool vid_pc98_enable_188user_menu_callback(DOSBoxMenu * const menu,DOSBoxMenu::i
     (void)menu;//UNUSED
     (void)menuitem;//UNUSED
     void gdc_egc_enable_update_vars(void);
-    extern bool enable_pc98_egc;
-    extern bool enable_pc98_grcg;
-    extern bool enable_pc98_16color;
+//    extern bool enable_pc98_egc;
+//    extern bool enable_pc98_grcg;
+//    extern bool enable_pc98_16color;
     extern bool enable_pc98_188usermod;
 
     if(IS_PC98_ARCH) {
@@ -6417,7 +6512,7 @@ bool vid_pc98_enable_egc_menu_callback(DOSBoxMenu * const menu,DOSBoxMenu::item 
     extern bool enable_pc98_egc;
     extern bool enable_pc98_grcg;
     extern bool enable_pc98_16color;
-    extern bool enable_pc98_188usermod;
+//    extern bool enable_pc98_188usermod;
 
     if(IS_PC98_ARCH) {
         enable_pc98_egc = !enable_pc98_egc;
@@ -6773,6 +6868,9 @@ void toggle_always_on_top(void) {
 void BlankDisplay(void);
 
 bool refreshtest_menu_callback(DOSBoxMenu * const xmenu, DOSBoxMenu::item * const menuitem) {
+    (void)menuitem;
+    (void)xmenu;
+
     BlankDisplay();
 
 #if DOSBOXMENU_TYPE == DOSBOXMENU_SDLDRAW
@@ -6911,6 +7009,10 @@ bool custom_bios = false;
 int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
     CommandLine com_line(argc,argv);
     Config myconf(&com_line);
+
+#if defined(WIN32) && !defined(HX_DOS)
+    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+#endif
 
 #if 0 /* VGA_Draw_2 self test: dot clock */
     {
@@ -7277,12 +7379,19 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
             sdl1_hax_macosx_highdpi_set_enable(dpi_aware_enable);
 #endif
 
-        /* -- SDL init */
-#if defined(C_SDL2)
-        if (SDL_Init(SDL_INIT_AUDIO|SDL_INIT_VIDEO|SDL_INIT_TIMER|/*SDL_INIT_CDROM|*/SDL_INIT_NOPARACHUTE) >= 0)
-#else
-        if (SDL_Init(SDL_INIT_AUDIO|SDL_INIT_VIDEO|SDL_INIT_TIMER|SDL_INIT_CDROM|SDL_INIT_NOPARACHUTE) >= 0)
+#ifdef MACOSX
+        osx_detect_nstouchbar();/*assigns to has_touch_bar_support*/
+        if (has_touch_bar_support) {
+            LOG_MSG("Mac OS X: NSTouchBar support detected in system");
+            osx_init_touchbar();
+        }
+
+        extern void osx_init_dock_menu(void);
+        osx_init_dock_menu();
 #endif
+
+        /* -- SDL init */
+        if (SDL_Init(SDL_INIT_AUDIO|SDL_INIT_VIDEO|SDL_INIT_TIMER|SDL_INIT_NOPARACHUTE) >= 0)
             sdl.inited = true;
         else
             E_Exit("Can't init SDL %s",SDL_GetError());
@@ -7307,7 +7416,7 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
         KeyboardLayoutDetect();
         SetMapperKeyboardLayout(host_keyboard_layout);
 
-        /* -- -- Initialise Joystick seperately. This way we can warn when it fails instead of exiting the application */
+        /* -- -- Initialise Joystick and CD-ROM seperately. This way we can warn when it fails instead of exiting the application */
         LOG(LOG_MISC,LOG_DEBUG)("Initializing SDL joystick subsystem...");
         if (SDL_InitSubSystem(SDL_INIT_JOYSTICK) >= 0) {
             sdl.num_joysticks = (Bitu)SDL_NumJoysticks();
@@ -7317,6 +7426,12 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
             LOG(LOG_GUI,LOG_WARN)("Failed to init joystick support");
             sdl.num_joysticks = 0;
         }
+
+#if !defined(C_SDL2)
+        if (SDL_InitSubSystem(SDL_INIT_CDROM) >= 0) {
+            LOG(LOG_GUI,LOG_WARN)("Failed to init CD-ROM support");
+        }
+#endif
 
         /* must redraw after modeset */
         sdl.must_redraw_all = true;
@@ -7828,7 +7943,62 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
         mainMenu.screenWidth = (unsigned int)sdl.surface->w;
         mainMenu.updateRect();
 #endif
+#if defined(WIN32) && !defined(HX_DOS)
+        /* Windows 7 taskbar extension support */
+        {
+            HRESULT hr;
 
+            hr = CoCreateInstance(CLSID_TaskbarList, NULL, CLSCTX_SERVER, IID_ITaskbarList3, (LPVOID*)(&winTaskbarList));
+            if (hr == S_OK) {
+                LOG_MSG("Windows: IID_ITaskbarList3 is available");
+
+#if !defined(C_SDL2)
+                THUMBBUTTON buttons[8];
+                int buttoni = 0;
+
+                {
+                    THUMBBUTTON &b = buttons[buttoni++];
+                    memset(&b, 0, sizeof(b));
+                    b.iId = ID_WIN_SYSMENU_MAPPER;
+                    b.hIcon = LoadIcon(GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_MAPPER));
+                    b.dwMask = THB_TOOLTIP | THB_FLAGS | THB_ICON;
+                    b.dwFlags = THBF_ENABLED | THBF_DISMISSONCLICK;
+                    wcscpy(b.szTip, L"Mapper");
+                }
+
+                {
+                    THUMBBUTTON &b = buttons[buttoni++];
+                    memset(&b, 0, sizeof(b));
+                    b.iId = ID_WIN_SYSMENU_CFG_GUI;
+                    b.hIcon = LoadIcon(GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_CFG_GUI));
+                    b.dwMask = THB_TOOLTIP | THB_FLAGS | THB_ICON;
+                    b.dwFlags = THBF_ENABLED | THBF_DISMISSONCLICK;
+                    wcscpy(b.szTip, L"Configuration GUI");
+                }
+
+                {
+                    THUMBBUTTON &b = buttons[buttoni++];
+                    memset(&b, 0, sizeof(b));
+                    b.iId = 1;
+                    b.dwMask = THB_FLAGS;
+                    b.dwFlags = THBF_DISABLED | THBF_NONINTERACTIVE | THBF_NOBACKGROUND;
+                }
+
+                {
+                    THUMBBUTTON &b = buttons[buttoni++];
+                    memset(&b, 0, sizeof(b));
+                    b.iId = ID_WIN_SYSMENU_PAUSE;
+                    b.hIcon = LoadIcon(GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_PAUSE));
+                    b.dwMask = THB_TOOLTIP | THB_FLAGS | THB_ICON;
+                    b.dwFlags = THBF_ENABLED;
+                    wcscpy(b.szTip, L"Pause");
+                }
+
+                winTaskbarList->ThumbBarAddButtons(GetHWND(), buttoni, buttons);
+#endif
+            }
+        }
+#endif
         {
             Section_prop *section = static_cast<Section_prop *>(control->GetSection("SDL"));
             assert(section != NULL);
@@ -8180,6 +8350,13 @@ fresh_boot:
 #endif
 
     SDL_Quit();//Let's hope sdl will quit as well when it catches an exception
+
+#if defined(WIN32) && !defined(HX_DOS)
+    if (winTaskbarList != NULL) {
+        winTaskbarList->Release();
+        winTaskbarList = NULL;
+    }
+#endif
 
     mainMenu.unbuild();
     mainMenu.clear_all_menu_items();

@@ -62,6 +62,7 @@ static int			cursor;
 static bool			running;
 static int			saved_bpp;
 static bool			shell_idle;
+static bool         in_gui = false;
 #if !defined(C_SDL2)
 static int			old_unicode;
 #endif
@@ -74,6 +75,13 @@ static SDL_Surface*		background;
 void GUI_LoadFonts(void) {
 	GUI::Font::addFont("default",new GUI::BitmapFont(int10_font_14,14,10));
 }
+
+extern uint32_t GFX_Rmask;
+extern unsigned char GFX_Rshift;
+extern uint32_t GFX_Gmask;
+extern unsigned char GFX_Gshift;
+extern uint32_t GFX_Bmask;
+extern unsigned char GFX_Bshift;
 
 static void getPixel(Bits x, Bits y, int &r, int &g, int &b, int shift)
 {
@@ -105,9 +113,9 @@ static void getPixel(Bits x, Bits y, int &r, int &g, int &b, int shift)
 		break;
 	case scalerMode32:
 		pixel = *((unsigned int)x+(Bit32u*)(src+(unsigned int)y*(unsigned int)render.scale.cachePitch));
-		r += (int)((pixel >> (16u+(unsigned int)shift)) & (0xffu >> shift));
-		g += (int)((pixel >> ( 8u+(unsigned int)shift)) & (0xffu >> shift));
-		b += (int)((pixel >>      (unsigned int)shift)  & (0xffu >> shift));
+        r += (int)(((pixel & GFX_Rmask) >> (GFX_Rshift + shift)) & (0xffu >> shift));
+        g += (int)(((pixel & GFX_Gmask) >> (GFX_Gshift + shift)) & (0xffu >> shift));
+        b += (int)(((pixel & GFX_Bmask) >> (GFX_Bshift + shift)) & (0xffu >> shift));
 		break;
 	}
 }
@@ -117,7 +125,14 @@ extern Bitu currentWindowWidth, currentWindowHeight;
 
 void GFX_GetSizeAndPos(int &x,int &y,int &width, int &height, bool &fullscreen);
 
+#if defined(WIN32) && !defined(HX_DOS)
+void WindowsTaskbarUpdatePreviewRegion(void);
+void WindowsTaskbarResetPreviewRegion(void);
+#endif
+
 static GUI::ScreenSDL *UI_Startup(GUI::ScreenSDL *screen) {
+    in_gui = true;
+
 	GFX_EndUpdate(0);
 	GFX_SetTitle(-1,-1,-1,true);
 	if(!screen) { //Coming from DOSBox. Clean up the keyboard buffer.
@@ -279,6 +294,10 @@ static GUI::ScreenSDL *UI_Startup(GUI::ScreenSDL *screen) {
 	SDL_UpdateRect(sdlscreen, 0, 0, 0, 0);
 #endif
 
+#if defined(WIN32) && !defined(HX_DOS)
+    WindowsTaskbarResetPreviewRegion();
+#endif
+
 	if (screen) screen->setSurface(sdlscreen);
 	else screen = new GUI::ScreenSDL(sdlscreen);
 
@@ -344,6 +363,11 @@ static void UI_Shutdown(GUI::ScreenSDL *screen) {
 	GFX_ResetScreen();
 #endif
 #endif
+
+#if defined(WIN32) && !defined(HX_DOS)
+    WindowsTaskbarUpdatePreviewRegion();
+#endif
+
 #if !defined(C_SDL2)
 	SDL_EnableUNICODE(old_unicode);
 	SDL_EnableKeyRepeat(0,0);
@@ -352,6 +376,12 @@ static void UI_Shutdown(GUI::ScreenSDL *screen) {
 
 	void GFX_ForceRedrawScreen(void);
 	GFX_ForceRedrawScreen();
+
+    in_gui = false;
+}
+
+bool GUI_IsRunning(void) {
+    return in_gui;
 }
 
 static void UI_RunCommands(GUI::ScreenSDL *s, const std::string &cmds) {
@@ -415,7 +445,8 @@ public:
 
 	void actionExecuted(GUI::ActionEventSource *b, const GUI::String &arg) {
         (void)b;//UNUSED
-        (void)arg;//UNUSED
+        // HACK: Attempting to cast a String to void causes "forming reference to void" errors when building with GCC 4.7
+        (void)arg.size();//UNUSED
 		std::string line;
 		if (prepare(line)) {
 			prop->SetValue(GUI::String(line));
@@ -722,7 +753,8 @@ public:
 
 	void actionExecuted(GUI::ActionEventSource *b, const GUI::String &arg) {
         (void)b;//UNUSED
-        (void)arg;//UNUSED
+        // HACK: Attempting to cast a String to void causes "forming reference to void" errors when building with GCC 4.7
+        (void)arg.size();//UNUSED
 		if (arg == "OK") control->PrintConfig(name->getText());
 		close();
 		if(shortcut) running=false;

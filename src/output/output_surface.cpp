@@ -79,7 +79,7 @@ void OUTPUT_SURFACE_EndUpdate(const Bit16u *changedLines)
     {
         const int srcWidth = sdl.draw.width;
         const int srcHeight = sdl.draw.height;
-        if (sdl_xbrz.renderbuf.size() == srcWidth * srcHeight && srcWidth > 0 && srcHeight > 0)
+        if (sdl_xbrz.renderbuf.size() == (unsigned int)srcWidth * (unsigned int)srcHeight && srcWidth > 0 && srcHeight > 0)
         {
             // please use sdl.clip to keep screen positioning consistent with the rest of the emulator
             int clipWidth = sdl.clip.w;
@@ -113,7 +113,7 @@ void OUTPUT_SURFACE_EndUpdate(const Bit16u *changedLines)
             if (mustLock) SDL_UnlockSurface(sdl.surface);
             if (!menu.hidecycles && !sdl.desktop.fullscreen) frames++;
 #if defined(C_SDL2)
-            SDL_UpdateWindowSurfaceRects(sdl.window, sdl.updateRects, 1);
+            SDL_UpdateWindowSurface(sdl.window);
 #else
             SDL_Flip(sdl.surface);
 #endif

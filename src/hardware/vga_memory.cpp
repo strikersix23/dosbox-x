@@ -1450,11 +1450,11 @@ public:
             /* according to real hardware, memory address does not affect char offset (port 0xA5) */
             if (sizeof(AWT) > 1) {
                 // FIXME: Untested
-                pc98_font_char_write(a1_font_load_addr,(addr >> 1) & 0xF,0,val);
-                pc98_font_char_write(a1_font_load_addr,(addr >> 1) & 0xF,1,val >> 8);
+                pc98_font_char_write(a1_font_load_addr,(addr >> 1) & 0xF,0,(uint8_t)val);
+                pc98_font_char_write(a1_font_load_addr,(addr >> 1) & 0xF,1,(uint8_t)((unsigned int)val >> 8u));
             }
             else {
-                pc98_font_char_write(a1_font_load_addr,(addr >> 1) & 0xF,addr & 1,val);
+                pc98_font_char_write(a1_font_load_addr,(addr >> 1) & 0xF,addr & 1,(uint8_t)val);
             }
 
             return;
@@ -2208,9 +2208,11 @@ void VGA_SetupMemory() {
 
         /* parallel system */
         if (vga_alt_new_mode) {
-            for (size_t si=0;si < VGA_Draw_2_elem;si++) {
+            for (size_t si=0;si < VGA_Draw_2_elem;si++)
                 vga.draw_2[si].draw_base = vga.mem.linear;
-            }
+
+            vga.draw_2[0].horz.char_pixel_mask = 0xFFu;
+            vga.draw_2[0].vert.char_pixel_mask = 0x1Fu;
         }
 
         /* may be related */

@@ -516,7 +516,6 @@ void KEYBOARD_AUX_Write(Bitu val) {
 bool allow_keyb_reset = true;
 
 void On_Software_CPU_Reset();
-void restart_program(std::vector<std::string> & parameters);
 
 static void write_p60(Bitu port,Bitu val,Bitu iolen) {
     (void)port;//UNUSED
@@ -2165,19 +2164,9 @@ static double pc98_mouse_tick_interval_ms(void) {
     return 1000.0/*ms*/ / pc98_mouse_rate_hz;
 }
 
-static double pc98_mouse_tick_time_ms(void) {
-    return fmod(PIC_FullIndex(),pc98_mouse_tick_interval_ms());
-}
-
 static double pc98_mouse_time_to_next_tick_ms(void) {
     const double x = pc98_mouse_tick_interval_ms();
     return x - fmod(PIC_FullIndex(),x);
-}
-
-static bool pc98_mouse_tick_signal(void) {
-    /* TODO: How is the 120Hz signal generated? If it's a square wave, what is the duty cycle? */
-    /*       At what point in the cycle is the interrupt generated? Beginning, or end? */
-    return pc98_mouse_tick_time_ms() < 0.1; /* GUESS: 100us = 0.1ms */
 }
 
 extern uint8_t MOUSE_IRQ;
@@ -2196,13 +2185,6 @@ static void pc98_mouse_tick_event(Bitu val) {
         PIC_AddEvent(pc98_mouse_tick_event,pc98_mouse_tick_interval_ms());
     else
         pc98_mouse_tick_scheduled = false;
-}
-
-static void pc98_mouse_tick_unschedule(void) {
-    if (pc98_mouse_tick_scheduled) {
-        pc98_mouse_tick_scheduled = false;
-        PIC_RemoveEvents(pc98_mouse_tick_event);
-    }
 }
 
 static void pc98_mouse_tick_schedule(void) {

@@ -661,10 +661,6 @@ static const char *def_menu_main[] = {
 #if !defined(C_EMSCRIPTEN)//FIXME: Shutdown causes problems with Emscripten
 	"--",
 #endif
-#if !defined(HX_DOS) && !defined(C_EMSCRIPTEN)
-	"mapper_restart",
-    "--",
-#endif
 #if !defined(C_EMSCRIPTEN)//FIXME: Shutdown causes problems with Emscripten
     "mapper_shutdown",
 #endif
@@ -1464,6 +1460,52 @@ void DOSBox_SetSysMenu(void) {
 
 		InsertMenuItem(sysmenu, GetMenuItemCount(sysmenu), TRUE, &mii);
 	}
+
+    AppendMenu(sysmenu, MF_SEPARATOR, -1, "");
+
+    {
+        const char *msg = "&Pause";
+
+        memset(&mii, 0, sizeof(mii));
+        mii.cbSize = sizeof(mii);
+        mii.fMask = MIIM_ID | MIIM_STRING | MIIM_STATE;
+        mii.fState = MFS_ENABLED;
+        mii.wID = ID_WIN_SYSMENU_PAUSE;
+        mii.dwTypeData = (LPTSTR)(msg);
+        mii.cch = (UINT)(strlen(msg) + 1);
+
+        InsertMenuItem(sysmenu, GetMenuItemCount(sysmenu), TRUE, &mii);
+    }
+
+    AppendMenu(sysmenu, MF_SEPARATOR, -1, "");
+
+    {
+        const char *msg = "Show &mapper interface";
+
+        memset(&mii, 0, sizeof(mii));
+        mii.cbSize = sizeof(mii);
+        mii.fMask = MIIM_ID | MIIM_STRING | MIIM_STATE;
+        mii.fState = MFS_ENABLED;
+        mii.wID = ID_WIN_SYSMENU_MAPPER;
+        mii.dwTypeData = (LPTSTR)(msg);
+        mii.cch = (UINT)(strlen(msg) + 1);
+
+        InsertMenuItem(sysmenu, GetMenuItemCount(sysmenu), TRUE, &mii);
+    }
+
+    {
+        const char *msg = "Show configuration &GUI";
+
+        memset(&mii, 0, sizeof(mii));
+        mii.cbSize = sizeof(mii);
+        mii.fMask = MIIM_ID | MIIM_STRING | MIIM_STATE;
+        mii.fState = MFS_ENABLED;
+        mii.wID = ID_WIN_SYSMENU_CFG_GUI;
+        mii.dwTypeData = (LPTSTR)(msg);
+        mii.cch = (UINT)(strlen(msg) + 1);
+
+        InsertMenuItem(sysmenu, GetMenuItemCount(sysmenu), TRUE, &mii);
+    }
 #endif
 }
 
@@ -1586,11 +1628,25 @@ void reflectmenu_INITMENU_cb() {
 void MSG_WM_COMMAND_handle(SDL_SysWMmsg &Message) {
     bool GFX_GetPreventFullscreen(void);
 
+    if (Message.msg != WM_COMMAND) return;
+#if defined(WIN32) && !defined(HX_DOS)
+    if (LOWORD(Message.wParam) == ID_WIN_SYSMENU_MAPPER) {
+        extern void MAPPER_Run(bool pressed);
+        MAPPER_Run(false);
+    }
+    if (LOWORD(Message.wParam) == ID_WIN_SYSMENU_CFG_GUI) {
+        extern void GUI_Run(bool pressed);
+        GUI_Run(false);
+    }
+    if (LOWORD(Message.wParam) == ID_WIN_SYSMENU_PAUSE) {
+        extern void PauseDOSBox(bool pressed);
+        PauseDOSBox(true);
+    }
+#endif
     if (!menu.gui || GetSetSDLValue(1, "desktop.fullscreen", 0)) return;
     if (!GetMenu(GetHWND())) return;
-    if (Message.msg != WM_COMMAND) return;
 #if DOSBOXMENU_TYPE == DOSBOXMENU_HMENU
-	if (mainMenu.mainMenuWM_COMMAND((unsigned int)Message.wParam)) return;
+	if (mainMenu.mainMenuWM_COMMAND((unsigned int)LOWORD(Message.wParam))) return;
 #endif
 }
 #else

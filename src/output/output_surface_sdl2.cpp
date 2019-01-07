@@ -19,7 +19,6 @@ Bitu OUTPUT_SURFACE_SetSize()
 
     SDL_SetWindowMinimumSize(sdl.window, 1, 1); /* NTS: 0 x 0 is not valid */
 
-retry:
     sdl.clip.w = sdl.draw.width;
     sdl.clip.h = sdl.draw.height;
     if (GFX_IsFullscreen()) {
@@ -36,9 +35,7 @@ retry:
             sdl.window = GFX_SetSDLWindowMode(sdl.draw.width, sdl.draw.height, SCREEN_SURFACE);
             if (sdl.window == NULL)
                 LOG_MSG("Fullscreen not supported: %s", SDL_GetError());
-            SDL_SetWindowFullscreen(sdl.window, 0);
             GFX_CaptureMouse();
-            goto retry;
         }
     }
     else {
@@ -165,6 +162,20 @@ retry:
         retFlags = GFX_CAN_32;
         break;
     }
+
+#if C_XBRZ
+    if (sdl_xbrz.enable)
+    {
+        bool old_scale_on = sdl_xbrz.scale_on;
+        xBRZ_SetScaleParameters(sdl.draw.width, sdl.draw.height, sdl.clip.w, sdl.clip.h);
+        if (sdl_xbrz.scale_on != old_scale_on) {
+            // when we are scaling, we ask render code not to do any aspect correction
+            // when we are not scaling, render code is allowed to do aspect correction at will
+            // due to this, at each scale mode change we need to schedule resize again because window size could change
+            PIC_AddEvent(VGA_SetupDrawing, 50); // schedule another resize here, render has already been initialized at this point and we have just changed its option
+        }
+    }
+#endif
 
     /* WARNING: If the user is resizing our window to smaller than what we want, SDL2 will give us a
      *          window surface according to the smaller size, and then we crash! */

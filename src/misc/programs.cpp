@@ -498,7 +498,6 @@ bool Program::SetEnv(const char * entry,const char * new_string) {
 }
 
 bool MSG_Write(const char *);
-void restart_program(std::vector<std::string> & parameters);
 
 /*! \brief          CONFIG.COM utility to control configuration and files
  *
@@ -574,21 +573,7 @@ void CONFIG::Run(void) {
 			return;
 
 		case P_RESTART:
-			if (securemode_check()) return;
-			if (pvars.size() == 0) restart_program(control->startup_params);
-			else {
-				std::vector<std::string> restart_params;
-				restart_params.push_back(control->cmdline->GetFileName());
-				for(size_t i = 0; i < pvars.size(); i++) {
-					restart_params.push_back(pvars[i]);
-					if (pvars[i].find(' ') != std::string::npos) {
-						pvars[i] = "\""+pvars[i]+"\""; // add back spaces
-					}
-				}
-				// the rest on the commandline, too
-				cmd->FillVector(restart_params);
-				restart_program(restart_params);
-			}
+            WriteOut("-restart is no longer supported\n");
 			return;
 		
 		case P_LISTCONF: {
@@ -1048,7 +1033,6 @@ void PROGRAMS_Init() {
 		"-writeconf or -wc with filename: write file to config directory.\n"\
 		"Use -writelang or -wl filename to write the current language strings.\n"\
 		"-all  Use -all with -wc and -writeconf to write ALL options to the file.\n"\
-		"-r [parameters]\n Restart DOSBox, either using the previous parameters or any that are appended.\n"\
 		"-wcp [filename]\n Write config file to the program directory, dosbox.conf or the specified \n filename.\n"\
 		"-wcd\n Write to the default config file in the config directory.\n"\
 		"-l lists configuration parameters.\n"\

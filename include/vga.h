@@ -320,6 +320,9 @@ typedef struct {
         // width (H) / scan lines (V) of a character cell
         unsigned char                               char_pixels = 0;
 
+        // bit mask for character row compare
+        unsigned char                               char_pixel_mask = 0;
+
         bool                                        blank_enable = false;           // blank enable
         bool                                        display_enable = false;         // display enable (active area)
         bool                                        retrace_enable = false;         // retrace enable
@@ -352,6 +355,11 @@ typedef struct {
         horz.crtc_addr += horz.crtc_addr_add;
         return ret;
     }
+
+    unsigned int                raster_scanline = 0;    // actual scan line out to display
+
+    unsigned char               doublescan_count = 0;   // VGA doublescan counter
+    unsigned char               doublescan_max = 0;     // Advance scanline at this count
 
     // NTS: horz.char_pixels == 8 for CGA/MDA/etc and EGA/VGA text, but EGA/VGA can select 9 pixels/char.
     //      VGA 320x200x256-color mode will have 4 pixels/char. A hacked version of 320x200x256-color mode
@@ -705,6 +713,14 @@ typedef struct {
 	Bit8u	bank_write;
 	Bitu	bank_size;
 } VGA_SVGA;
+
+typedef union CGA_Latch {
+	Bit16u d;
+	Bit8u b[2];
+
+    CGA_Latch() { }
+    CGA_Latch(const Bit16u raw) : d(raw) { }
+} CGA_Latch;
 
 typedef union VGA_Latch {
 	Bit32u d;

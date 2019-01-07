@@ -1,3 +1,9 @@
+
+// Tell Mac OS X to shut up about deprecated OpenGL calls
+#ifndef GL_SILENCE_DEPRECATION
+#define GL_SILENCE_DEPRECATION
+#endif
+
 #include <sys/types.h>
 #include <assert.h>
 #include <math.h>
@@ -465,7 +471,7 @@ void OUTPUT_OPENGL_EndUpdate(const Bit16u *changedLines)
             const int srcWidth = sdl.draw.width;
             const int srcHeight = sdl.draw.height;
 
-            if (sdl_xbrz.renderbuf.size() == srcWidth * srcHeight && srcWidth > 0 && srcHeight > 0)
+            if (sdl_xbrz.renderbuf.size() == (unsigned int)srcWidth * (unsigned int)srcHeight && srcWidth > 0 && srcHeight > 0)
             {
                 // we assume render buffer is *not* scaled!
                 const uint32_t* renderBuf = &sdl_xbrz.renderbuf[0]; // help VS compiler a little + support capture by value
@@ -522,7 +528,14 @@ void OUTPUT_OPENGL_EndUpdate(const Bit16u *changedLines)
             glBindTexture(GL_TEXTURE_2D, sdl_opengl.texture);
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
                 (int)sdl.draw.width, (int)sdl.draw.height, GL_BGRA_EXT,
-                GL_UNSIGNED_INT_8_8_8_8_REV, (void*)0);
+#if defined (MACOSX)
+                // needed for proper looking graphics on macOS 10.12, 10.13
+                GL_UNSIGNED_INT_8_8_8_8,
+#else
+                // works on Linux
+                GL_UNSIGNED_INT_8_8_8_8_REV,
+#endif
+                (void*)0);
             glBindBufferARB(GL_PIXEL_UNPACK_BUFFER_EXT, 0);
             glCallList(sdl_opengl.displaylist);
             SDL_GL_SwapBuffers();

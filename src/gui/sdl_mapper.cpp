@@ -319,7 +319,7 @@ public:
         return true;
     }
 
-    void ActivateEvent(bool ev_trigger,bool skip_action) {
+    virtual void ActivateEvent(bool ev_trigger,bool skip_action) {
         if (current_value>25000) {
             /* value exceeds boundary, trigger event if not active */
             if (!activity && !skip_action) Active(true);
@@ -333,8 +333,8 @@ public:
         }
     }
 
-    void DeActivateEvent(bool /*ev_trigger*/) {
-        activity--;
+    virtual void DeActivateEvent(bool /*ev_trigger*/) {
+        if (activity > 0) activity--;
         if (!activity) Active(false);
     }
 };
@@ -353,7 +353,7 @@ public:
         return false;
     }
 
-    void ActivateEvent(bool ev_trigger,bool skip_action) {
+    virtual void ActivateEvent(bool ev_trigger,bool skip_action) {
         if (ev_trigger) {
             activity++;
             if (!skip_action) Active(true);
@@ -364,7 +364,7 @@ public:
         }
     }
 
-    void DeActivateEvent(bool ev_trigger) {
+    virtual void DeActivateEvent(bool ev_trigger) {
         if (ev_trigger) {
             if (activity>0) activity--;
             if (activity==0) {
@@ -760,21 +760,21 @@ public:
         key = _key;
     }
     virtual ~CKeyBind() {}
-    void BindName(char * buf) {
+    virtual void BindName(char * buf) override {
 #if defined(C_SDL2)
         sprintf(buf,"Key %s",SDL_GetScancodeName(key));
 #else
         sprintf(buf,"Key %s",SDL_GetKeyName(MapSDLCode((Bitu)key)));
 #endif
     }
-    void ConfigName(char * buf) {
+    virtual void ConfigName(char * buf) override {
 #if defined(C_SDL2)
         sprintf(buf,"key %d",key);
 #else
         sprintf(buf,"key %d",MapSDLCode((Bitu)key));
 #endif
     }
-    virtual std::string GetBindMenuText(void) {
+    virtual std::string GetBindMenuText(void) override {
         const char *s;
         std::string r,m;
 
@@ -963,10 +963,10 @@ public:
 		joystick = _joystick;
     }
     virtual ~CJAxisBind() {}
-    void ConfigName(char * buf) {
+    virtual void ConfigName(char * buf) override {
         sprintf(buf,"%s axis %d %d",group->ConfigStart(),(int)axis,positive ? 1 : 0);
     }
-    void BindName(char * buf) {
+    virtual void BindName(char * buf) override {
         sprintf(buf,"%s Axis %d%s",group->BindStart(),(int)axis,positive ? "+" : "-");
     }
 
@@ -1023,10 +1023,10 @@ public:
         button=_button;
     }
     virtual ~CJButtonBind() {}
-    void ConfigName(char * buf) {
+    virtual void ConfigName(char * buf) override {
         sprintf(buf,"%s button %d",group->ConfigStart(),(int)button);
     }
-    void BindName(char * buf) {
+    virtual void BindName(char * buf) override {
         sprintf(buf,"%s Button %d",group->BindStart(),(int)button);
     }
 protected:
@@ -1048,10 +1048,10 @@ public:
         else E_Exit("MAPPER:JOYSTICK:Invalid hat position");
     }
     virtual ~CJHatBind() {}
-    void ConfigName(char * buf) {
+    virtual void ConfigName(char * buf) override {
         sprintf(buf,"%s hat %d %d",group->ConfigStart(),(int)hat,(int)dir);
     }
-    void BindName(char * buf) {
+    virtual void BindName(char * buf) override {
         sprintf(buf,"%s Hat %d %s",group->BindStart(),(int)hat,(dir==SDL_HAT_UP)?"up":
                                                         ((dir==SDL_HAT_RIGHT)?"right":
                                                         ((dir==SDL_HAT_DOWN)?"down":"left")));
@@ -1810,6 +1810,7 @@ static struct CMapper {
     CBindList_it abindit;           //Location of active bind in list
     bool redraw;
     bool addbind;
+    bool running=false;
     Bitu mods;
     struct {
         Bitu num_groups,num;
@@ -3568,7 +3569,7 @@ void BIND_MappingEvents(void) {
 #endif
 
         switch (event.type) {
-#if defined(C_SDL2)
+#if defined(C_SDL2) && !defined(IGNORE_TOUCHSCREEN)
         case SDL_FINGERUP:
             Mapper_FingerInputEvent(event);
             break;
@@ -3826,6 +3827,11 @@ void MAPPER_Run(bool pressed) {
     PIC_AddEvent(MAPPER_RunEvent,0.0001f);  //In case mapper deletes the key object that ran it
 }
 
+#if defined(WIN32) && !defined(HX_DOS)
+void WindowsTaskbarUpdatePreviewRegion(void);
+void WindowsTaskbarResetPreviewRegion(void);
+#endif
+
 void MAPPER_RunInternal() {
     bool GFX_GetPreventFullscreen(void);
 
@@ -3837,6 +3843,8 @@ void MAPPER_RunInternal() {
         LOG_MSG("MAPPER ui is not available while 3Dfx OpenGL emulation is running");
         return;
     }
+
+    mapper.running = true;
 
 #if defined(__WIN32__) && !defined(C_SDL2) && !defined(C_HX_DOS)
     if(menu.maxwindow) ShowWindow(GetHWND(), SW_RESTORE);
@@ -3881,6 +3889,11 @@ void MAPPER_RunInternal() {
         last_clicked=NULL;
     }
 #endif
+
+#if defined(WIN32) && !defined(HX_DOS)
+    WindowsTaskbarResetPreviewRegion();
+#endif
+
     /* Go in the event loop */
     mapper.exit=false;  
     mapper.redraw=true;
@@ -3938,6 +3951,11 @@ void MAPPER_RunInternal() {
         SendInput(1, &ip, sizeof(INPUT));
     }
 #endif
+
+#if defined(WIN32) && !defined(HX_DOS)
+    WindowsTaskbarUpdatePreviewRegion();
+#endif
+
 //  KEYBOARD_ClrBuffer();
     GFX_LosingFocus();
 
@@ -3952,6 +3970,12 @@ void MAPPER_RunInternal() {
 
     void GFX_ForceRedrawScreen(void);
     GFX_ForceRedrawScreen();
+
+    mapper.running = false;
+}
+
+bool MAPPER_IsRunning(void) {
+    return mapper.running;
 }
 
 void MAPPER_CheckKeyboardLayout() {
@@ -4199,5 +4223,26 @@ void MAPPER_Shutdown() {
         }
     }
     handlergroup.clear();
+}
+
+void ext_signal_host_key(bool enable) {
+    CEvent *x = get_mapper_event_by_name("host");
+    if (x != NULL) {
+        if (enable) {
+            x->SetValue(32767);//HACK
+            x->ActivateEvent(true,false);
+        }
+        else {
+            x->SetValue(0);
+            x->DeActivateEvent(true);
+        }
+    }
+    else {
+        fprintf(stderr,"WARNING: No host mapper event\n");
+    }
+}
+
+void MapperCapCursorToggle(void) {
+    MAPPER_TriggerEventByName("hand_capmouse");
 }
 
