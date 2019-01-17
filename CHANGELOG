@@ -1,4 +1,19 @@
 0.82.15 (next)
+  - 8254 PIT timer emulation fixed not to report writes to PIT 0
+    Timer counters if the game is writing the same value
+    repeatedly.
+  - 8254 PIT timer connected to PC speaker now handles new counter
+    value without causing full reset of the square wave (mode 3),
+    which allows DOSBox-X to pass all tests in DOSLIB.
+  - Added dosbox.conf option to control bus speed (and therefore
+    I/O delay) of the C-BUS in PC-98 mode. Added defaults
+    appropriate to PC-98 mode according to bus speeds documented
+    for PC-98.
+  - Timer clock gate emulation fixed to work properly in PC-98
+    mode as well as IBM PC mode, when the PC speaker clock is
+    enabled or disabled. This includes resetting the counter
+    on the 8254 when the clock gate (trigger pin) is turned off
+    [DOSLIB test TPCRAPI6.EXE]
   - Introductory text now indicates whether the build was
     compiled against SDL1 or SDL2 (emendelson)
   - Windows SDL1 builds now remember window position even when
