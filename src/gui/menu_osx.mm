@@ -3,6 +3,11 @@
 #include "config.h"
 #include "menu.h"
 
+#include "sdlmain.h"
+#include "SDL.h"
+#include "SDL_version.h"
+#include "SDL_syswm.h"
+
 #if DOSBOXMENU_TYPE == DOSBOXMENU_NSMENU /* Mac OS X NSMenu / NSMenuItem handle */
 # include <MacTypes.h>
 # include <Cocoa/Cocoa.h>
@@ -17,6 +22,7 @@
 #if !defined(C_SDL2)
 extern "C" void* sdl1_hax_stock_osx_menu(void);
 extern "C" void sdl1_hax_stock_osx_menu_additem(NSMenu *modme);
+extern "C" NSWindow *sdl1_hax_get_window(void);
 #endif
 
 void *sdl_hax_nsMenuItemFromTag(void *nsMenu, unsigned int tag) {
@@ -105,12 +111,12 @@ void sdl_hax_nsMenuItemRelease(void *nsMenuItem) {
 }
 
 void sdl_hax_nsMenuAddApplicationMenu(void *nsMenu) {
+#if defined(C_SDL2)
 	/* make up an Application menu and stick it in first.
 	   the caller should have passed us an empty menu */
 	NSMenu *appMenu;
 	NSMenuItem *appMenuItem;
 
-#if defined(C_SDL2)
 	appMenu = [[NSMenu alloc] initWithTitle:@""];
 	[appMenu addItemWithTitle:@"About DOSBox-X" action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
 
@@ -130,12 +136,26 @@ extern void PushDummySDL(void);
 extern bool MAPPER_IsRunning(void);
 extern bool GUI_IsRunning(void);
 
+static DOSBoxMenu *altMenu = NULL;
+
+void menu_osx_set_menuobj(DOSBoxMenu *new_altMenu) {
+    if (new_altMenu != NULL && new_altMenu != &mainMenu)
+        altMenu = new_altMenu;
+    else
+        altMenu = NULL;
+}
+
 @implementation NSApplication (DOSBoxX)
 - (void)DOSBoxXMenuAction:(id)sender
 {
-    if (is_paused || MAPPER_IsRunning() || GUI_IsRunning()) return;
-	/* sorry! */
-	mainMenu.mainMenuAction([sender tag]);
+    if (altMenu != NULL) {
+        altMenu->mainMenuAction([sender tag]);
+    }
+    else {
+        if (is_paused || MAPPER_IsRunning() || GUI_IsRunning()) return;
+        /* sorry! */
+        mainMenu.mainMenuAction([sender tag]);
+    }
 }
 
 - (void)DOSBoxXMenuActionMapper:(id)sender
@@ -243,10 +263,13 @@ extern void ext_signal_host_key(bool enable);
 @implementation DOSBoxXTouchBarDelegate
 - (void)onHostKey:(id)sender
 {
+    (void)sender;
     fprintf(stderr,"HostKey\n");
 }
 
 - (NSTouchBarItem *)touchBar:(NSTouchBar *)touchBar makeItemForIdentifier:(NSTouchBarItemIdentifier)identifier {
+    (void)touchBar;
+
     if ([identifier isEqualToString:TouchBarMapperIdentifier]) {
         NSCustomTouchBarItem *item = [[NSCustomTouchBarItem alloc] initWithIdentifier:TouchBarMapperIdentifier];
 
@@ -296,6 +319,20 @@ extern void ext_signal_host_key(bool enable);
 @end
 #endif
 
+void osx_reload_touchbar(void) {
+#if MAC_OS_X_VERSION_MAX_ALLOWED >= 101202/* touch bar interface appeared in 10.12.2+ according to Apple */
+    NSWindow *wnd = nil;
+
+# if !defined(C_SDL2)
+    wnd = sdl1_hax_get_window();
+# endif
+
+    if (wnd != nil) {
+        [wnd setTouchBar:nil];
+    }
+#endif
+}
+
 #if MAC_OS_X_VERSION_MAX_ALLOWED >= 101202/* touch bar interface appeared in 10.12.2+ according to Apple */
 NSTouchBar* osx_on_make_touch_bar(NSWindow *wnd) {
     (void)wnd;
@@ -304,18 +341,34 @@ NSTouchBar* osx_on_make_touch_bar(NSWindow *wnd) {
     touchBar.delegate = [DOSBoxXTouchBarDelegate alloc];
 
     touchBar.customizationIdentifier = TouchBarCustomIdentifier;
-    touchBar.defaultItemIdentifiers = @[
-        NSTouchBarItemIdentifierFixedSpaceLarge, // try to keep the user from hitting the ESC button accidentally when reaching for Host Key
-        TouchBarHostKeyIdentifier,
-        NSTouchBarItemIdentifierFixedSpaceLarge,
-        TouchBarPauseIdentifier,
-        NSTouchBarItemIdentifierFixedSpaceLarge,
-        TouchBarCursorCaptureIdentifier,
-        NSTouchBarItemIdentifierFixedSpaceLarge,
-        TouchBarMapperIdentifier,
-        TouchBarCFGGUIIdentifier,
-        NSTouchBarItemIdentifierOtherItemsProxy
-    ];
+    if (GUI_IsRunning()) {
+        touchBar.defaultItemIdentifiers = @[
+            NSTouchBarItemIdentifierOtherItemsProxy
+        ];
+    }
+    else if (MAPPER_IsRunning()) {
+        touchBar.defaultItemIdentifiers = @[
+            NSTouchBarItemIdentifierFixedSpaceLarge, // try to keep the user from hitting the ESC button accidentally when reaching for Host Key
+            TouchBarHostKeyIdentifier,
+            NSTouchBarItemIdentifierFixedSpaceLarge,
+            NSTouchBarItemIdentifierOtherItemsProxy
+        ];
+    }
+    else {
+        touchBar.defaultItemIdentifiers = @[
+            NSTouchBarItemIdentifierFixedSpaceLarge, // try to keep the user from hitting the ESC button accidentally when reaching for Host Key
+            TouchBarHostKeyIdentifier,
+            NSTouchBarItemIdentifierFixedSpaceLarge,
+            TouchBarPauseIdentifier,
+            NSTouchBarItemIdentifierFixedSpaceLarge,
+            TouchBarCursorCaptureIdentifier,
+            NSTouchBarItemIdentifierFixedSpaceLarge,
+            TouchBarMapperIdentifier,
+            TouchBarCFGGUIIdentifier,
+            NSTouchBarItemIdentifierOtherItemsProxy
+        ];
+    }
+
     touchBar.customizationAllowedItemIdentifiers = @[
         TouchBarHostKeyIdentifier,
         TouchBarMapperIdentifier,
@@ -384,4 +437,107 @@ void osx_init_dock_menu(void) {
 #endif
 }
 #endif
+
+#if !defined(C_SDL2)
+extern "C" int sdl1_hax_macosx_window_to_monitor_and_update(CGDirectDisplayID *did);
+#endif
+
+int my_quartz_match_window_to_monitor(CGDirectDisplayID *new_id,NSWindow *wnd);
+
+void MacOSX_GetWindowDPI(ScreenSizeInfo &info) {
+    NSWindow *wnd = nil;
+
+    info.clear();
+
+#if !defined(C_SDL2)
+    wnd = sdl1_hax_get_window();
+#else
+    SDL_Window* GFX_GetSDLWindow(void);
+
+    SDL_SysWMinfo wminfo;
+    memset(&wminfo,0,sizeof(wminfo));
+    SDL_VERSION(&wminfo.version);
+
+    if (SDL_GetWindowWMInfo(GFX_GetSDLWindow(),&wminfo) >= 0) {
+        if (wminfo.subsystem == SDL_SYSWM_COCOA && wminfo.info.cocoa.window != NULL) {
+            wnd = wminfo.info.cocoa.window;
+        }
+    }
+#endif
+
+    if (wnd != nil) {
+        CGDirectDisplayID did = 0;
+
+        if (my_quartz_match_window_to_monitor(&did,wnd) >= 0) {
+            CGRect drct = CGDisplayBounds(did);
+            CGSize dsz = CGDisplayScreenSize(did);
+
+            info.method = ScreenSizeInfo::METHOD_COREGRAPHICS;
+
+            info.screen_position_pixels.x        = drct.origin.x;
+            info.screen_position_pixels.y        = drct.origin.y;
+
+            info.screen_dimensions_pixels.width  = drct.size.width;
+            info.screen_dimensions_pixels.height = drct.size.height;
+
+            /* According to Apple documentation, this function CAN return zero */
+            if (dsz.width > 0 && dsz.height > 0) {
+                info.screen_dimensions_mm.width      = dsz.width;
+                info.screen_dimensions_mm.height     = dsz.height;
+
+                if (info.screen_dimensions_mm.width > 0)
+                    info.screen_dpi.width =
+                        ((((double)info.screen_dimensions_pixels.width) * 25.4) /
+                         ((double)info.screen_dimensions_mm.width));
+
+                if (info.screen_dimensions_mm.height > 0)
+                    info.screen_dpi.height =
+                        ((((double)info.screen_dimensions_pixels.height) * 25.4) /
+                         ((double)info.screen_dimensions_mm.height));
+            }
+        }
+    }
+}
+
+int my_quartz_match_window_to_monitor(CGDirectDisplayID *new_id,NSWindow *wnd) {
+    if (wnd != nil) {
+        CGError err;
+        uint32_t cnt = 1;
+        CGDirectDisplayID did = 0;
+        NSRect rct = [wnd frame];
+        NSPoint pt = [wnd convertPointToScreen:NSMakePoint(rct.size.width / 2, rct.size.height / 2)];
+
+        {
+            /* Eugh this ugliness wouldn't be necessary if we didn't have to fudge relative to primary display. */
+            CGRect prct = CGDisplayBounds(CGMainDisplayID());
+            pt.y = (prct.origin.y + prct.size.height) - pt.y;
+        }
+
+        err = CGGetDisplaysWithPoint(pt,1,&did,&cnt);
+
+        /* This might happen if our window is so far off the screen that the center point does not match any monitor */
+        if (err != kCGErrorSuccess) {
+            err = kCGErrorSuccess;
+            did = CGMainDisplayID(); /* Can't fail, eh, Apple? OK then. */
+        }
+
+        if (err == kCGErrorSuccess) {
+            *new_id = did;
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
+#if !defined(C_SDL2)
+extern "C" int (*sdl1_hax_quartz_match_window_to_monitor)(CGDirectDisplayID *new_id,NSWindow *wnd);
+#endif
+
+void qz_set_match_monitor_cb(void) {
+#if !defined(C_SDL2)
+    sdl1_hax_quartz_match_window_to_monitor = my_quartz_match_window_to_monitor;
+#endif
+}
+
 

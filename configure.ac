@@ -1,5 +1,5 @@
 dnl Init.
-AC_INIT(dosbox-x,0.82.15,[https://github.com/joncampbell123/dosbox-x/issues],[],[http://dosbox-x.software])
+AC_INIT(dosbox-x,0.82.16,[https://github.com/joncampbell123/dosbox-x/issues],[],[http://dosbox-x.software])
 AC_PREREQ(2.60)
 AC_CONFIG_SRCDIR(README)
 
@@ -405,6 +405,11 @@ case "$host" in
        dnl FEATURE: Whether to support direct serial port passthrough
        AC_DEFINE(C_DIRECTSERIAL, 1, [ Define to 1 if you want serial passthrough support (Win32, Posix and OS/2).])
        ;;
+    *-*-riscos*)
+       AC_DEFINE(RISCOS, 1, [Compiling on RISC OS])
+       dnl The following line is required in order to use std::to_string()
+       CXXFLAGS="$CXXFLAGS -D_GLIBCXX_USE_C99=1"
+       ;;
 esac
 fi
 
@@ -527,6 +532,14 @@ dnl LIBRARY TEST: libpcap
 AC_CHECK_HEADER(pcap.h,have_pcap_h=yes,)
 AC_CHECK_LIB(pcap, pcap_open_live, have_pcap_lib=yes, ,-lz)
 
+# FIXME: Arrggh we need the WHOLE PATH
+pwd=`pwd`
+
+CFLAGS="$CFLAGS -I$pwd/vs2015/sdlnet/linux-host/include -I$pwd/vs2015/sdlnet/linux-host/include/SDL"
+LDFLAGS="$LDFLAGS -L$pwd/vs2015/sdlnet/linux-host/lib"
+CPPFLAGS="$CPPFLAGS -I$pwd/vs2015/sdlnet/linux-host/include -I$pwd/vs2015/sdlnet/linux-host/include/SDL"
+CXXFLAGS="$CXXFLAGS -I$pwd/vs2015/sdlnet/linux-host/include -I$pwd/vs2015/sdlnet/linux-host/include/SDL"
+
 dnl LIBRARY TEST: SDLnet 1.x
 AC_CHECK_HEADER(SDL_net.h,have_sdl_net_h=yes,)
 AC_CHECK_LIB(SDL_net, SDLNet_Init, have_sdl_net_lib=yes, , )
@@ -543,6 +556,18 @@ if test x$enable_x11 != xno; then
   AC_CHECK_LIB(X11, main, have_x11_lib=yes, have_x11_lib=no, )
   AC_CHECK_LIB(Xrandr, XRRGetCrtcInfo, have_xrandr_lib=yes, have_xrandr_lib=no, )
   AC_CHECK_HEADER(X11/XKBlib.h, have_x11_h=yes, have_x11_h=no, )
+
+  dnl Compile test will fail for XKBrules.h if we do not also include XKBlib.h
+  dnl Hope your compiler supports the GCC style -include option!
+  if test x$have_x11_h = xyes; then
+    save_CPPFLAGS=$CPPFLAGS
+    CPPFLAGS="$CPPFLAGS -include X11/XKBlib.h"
+
+    AC_CHECK_HEADER(X11/extensions/XKBrules.h, have_x11_ext_xkbrules_h=yes, have_x11_ext_xkbrules_h=no, )
+    AC_CHECK_HEADER(X11/extensions/XKBfile.h, have_xkbfile_h=yes, have_xkbfile_h=no, )
+
+    CPPFLAGS=$save_CPPFLAGS
+  fi
 fi
 
 dnl LIBRARY TEST: Fluidsynth support
@@ -767,6 +792,25 @@ else
   AC_MSG_RESULT(no)
 fi 
 
+AH_TEMPLATE(C_FPU_X86,[Define to 1 to use a x86/x64 assembly fpu core])
+AC_ARG_ENABLE(fpu-x86,AC_HELP_STRING([--disable-fpu-x86],[Disable x86 assembly fpu core]),,enable_fpu_x86=yes)
+AC_ARG_ENABLE(fpu-x64,AC_HELP_STRING([--disable-fpu-x64],[Disable x64 assembly fpu core]),,enable_fpu_x64=yes)
+AC_MSG_CHECKING(whether the x86/x64 assembly fpu core will be enabled) 
+if test x$enable_fpu_x86 = xno -o x$enable_fpu_x64 = xno; then 
+   AC_MSG_RESULT(no)
+else
+  if test x$enable_fpu = xyes; then
+    if test x$c_targetcpu = xx86 -o x$c_targetcpu = xx86_64; then
+        AC_DEFINE(C_FPU_X86,1)
+        AC_MSG_RESULT(yes)
+    else
+        AC_MSG_RESULT(no)
+    fi
+  else
+      AC_MSG_RESULT(no)
+  fi
+fi
+
 dnl FEATURE: Whether to enable unaligned memory access
 AH_TEMPLATE(C_UNALIGNED_MEMORY,[Define to 1 to use a unaligned memory access])
 AC_ARG_ENABLE(unaligned_memory,AC_HELP_STRING([--disable-unaligned-memory],[Disable unaligned memory access]),,enable_unaligned_memory=yes)
@@ -827,7 +871,7 @@ if test x$enable_x11 != xno; then
   AH_TEMPLATE(C_X11_XKB,[define to 1 if you have XKBlib.h and X11 lib])
   AC_MSG_CHECKING(for XKBlib support)
   if test x$have_x11_lib = xyes -a x$have_x11_h = xyes ; then
-    LIBS="$LIBS -lX11 -lxkbfile"
+    LIBS="$LIBS -lX11"
     AC_DEFINE(C_X11_XKB,1)
     AC_MSG_RESULT(yes)
   else
@@ -843,6 +887,22 @@ if test x$enable_x11 != xno; then
     AC_MSG_RESULT(yes)
   else
     AC_MSG_RESULT(no)
+  fi
+
+  dnl Having XKBlib doesn't mean XKBrules.h is around
+  if test x$have_x11_ext_xkbrules_h = xyes ; then
+    AH_TEMPLATE(C_X11_EXT_XKBRULES,[define to 1 if XKBrules.h is present])
+    AC_DEFINE(C_X11_EXT_XKBRULES,1)
+  fi
+  if test x$have_xkbfile_h = xyes ; then
+    AH_TEMPLATE(C_X11_XKBFILE,[define to 1 if XKBfile.h is present])
+    AC_DEFINE(C_X11_XKBFILE,1)
+    LIBS="$LIBS -lxkbfile"
+  fi
+
+  if test x$have_x11_h = xyes ; then
+    AH_TEMPLATE(C_X11,[define to 1 to enable X11 support])
+    AC_DEFINE(C_X11,1)
   fi
 fi
 
@@ -922,29 +982,35 @@ if test -n "$SDL2_LIBS"; then
 fi
 
 if test x$enable_d3d9 = xyes; then
-case "$host" in
-    *-*-cygwin* | *-*-mingw32*)
-      if test x$have_d3d9_h = xyes -a x$have_d3dx9math_h = xyes ; then
-        AC_MSG_RESULT(yes)
-        AC_DEFINE(HAVE_D3D9_H,1)
-	if test x$enable_d3d_shaders = xyes; then
-		AC_DEFINE(C_D3DSHADERS,1)
-	fi
-	  else
-        AC_MSG_RESULT(no)
-      fi
-    ;;
+    case "$host" in
+        *-*-cygwin* | *-*-mingw32*)
+        if test x$have_d3d9_h = xyes -a x$have_d3dx9math_h = xyes ; then
+	    do_d3d=1
+            AC_MSG_RESULT(yes)
+            AH_TEMPLATE(C_DIRECT3D,[Define to 1 to enable Direct3D 9 display output support])
+            AC_DEFINE(HAVE_D3D9_H,1)
+            AC_DEFINE(C_DIRECT3D,1)
+            if test x$enable_d3d_shaders = xyes; then
+                AC_DEFINE(C_D3DSHADERS,1)
+            fi
+        else
+            AC_MSG_RESULT(no)
+        fi
+        ;;
     *)
-     AC_MSG_RESULT(no)
-    ;;
-esac
+        AC_MSG_RESULT(no)
+        ;;
+    esac
 else
   AC_MSG_RESULT(no)
 fi
 
+AM_CONDITIONAL(C_DIRECT3D, test x"$do_d3d" == x"1")
+
 AC_CONFIG_FILES([ 
 Makefile
 src/Makefile
+src/dosbox.plist
 src/cpu/Makefile
 src/cpu/core_full/Makefile
 src/cpu/core_normal/Makefile
@@ -964,6 +1030,7 @@ src/libs/zmbv/Makefile
 src/libs/gui_tk/Makefile
 src/libs/porttalk/Makefile
 src/output/Makefile
+src/output/direct3d/Makefile
 src/builtin/Makefile
 src/misc/Makefile
 src/shell/Makefile

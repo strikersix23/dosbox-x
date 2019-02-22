@@ -1,4 +1,106 @@
-0.82.15 (next)
+0.82.16 (next)
+  - VS2017 project files can now compile DOSBox-X to run on
+    ARM versions of Windows RT (driver1998)
+  - Local filesystem support fixed to sanitize DOS dates
+    before applying them to files on the host filesystem
+    so that invalid dates within DOSBox-X do not make invalid
+    dates on the host filesystem.
+  - VS2017 project files can now compile DOSBox-X to run on
+    ARM64 versions of Windows 10 (driver1998)
+  - Fixed FAT driver progamming mistake (inherited from
+    DOSBox SVN) that used the Windows 95 "Created" date/time
+    stamp rather than the original MS-DOS "Modified" date/time
+    stamp field.
+  - FAT driver now allows setting file date/time properly
+    on create or INT 21h call to set date/time, and updates
+    date/time on close after writing the file. Copy a file
+    to a disk image should preserve the date, and new files
+    created on the disk image should no longer have the
+    date/time stamp Jan 1st, 1980 12:00:00 AM midnight.
+  - Configuration GUI now allows user to exit dialog boxes
+    and windows by hitting the ESC key.
+  - Entering the mapper UI on Mac OS X will now hide all but
+    the Host Key button on the touch bar. Entering the
+    Configuration GUI will hide all buttons.
+  - If DOSBox-X is run on a platform where the GUI provides
+    a menu resource, bringing up the mapper will replace the
+    main menu with a mapper-specific menu until you exit the
+    mapper. Same for the configuration GUI.
+  - Mapper now allows user to exit by hitting ESC key three
+    times in a row.
+  - Windows MinGW builds now properly support and enable the
+    Direct3D output
+  - Mac OS X builds now contain the correct version number in
+    the application plist.
+  - SDL1 builds fixed to always compile with internal SDL_net
+    library instead of public library on the system
+  - Mac OS X SDL1 builds fixed to always clip the desktop
+    dimensions against the available video modes provided
+    by the system to avoid problems with the 1080i/1080p
+    modes listed in the System Preferences dialog and older
+    HDTV LCD TVs with lower than 1920x1080 native resolution.
+  - "unmask keyboard on int 16 read" option is on by default,
+    to allow DOSBox-X to keep the keyboard working with
+    Windows 3.11 Windows for Workgroups.
+  - Added multi-monitor support and detection for Mac OS X.
+  - Fixed problem on multi-monitor Linux/X11 setups where going
+    fullscreen on the primary monitor leaves the non-fullscreen
+    window sticking out on the adjacent monitor.
+  - Windows SDL1 builds fixed so that on multi-monitor setups,
+    going fullscreen will fill the monitor the window is
+    placed on.
+  - Added support for multi-monitor and DPI determination for
+    Microsoft Windows.
+  - SDL1 and SDL2 builds now examine multi-monitor setups and
+    so that they can go fullscreen properly on one monitor
+    instead of going fullscreen across all monitors, in
+    Linux/X11.
+  - SDL1 OpenGL code fixed not to leave a blank space at the
+    top of the screen when going fullscreen (if the menus are
+    SDL drawn menus).
+  - SDL1 library modified to center cursor properly no matter
+    where on the overall desktop the fullscreen window exists.
+  - Multi-monitor and fullscreen support added for Linux/X11
+    versions of SDL1 DOSBox-X.
+  - For non-x86 targets, or x86 targets where the user prefers
+    not to use the x86 FPU core, code has been added to emulate
+    the FPU instructions and registers using the "long double"
+    data type for full 80-bit precision. This fixes 3D glitches
+    in "Explora" though it still doesn't pass the Intel i387
+    test program.
+  - PC-98 INT 18h AH=04h: Added software delay to slow down some
+    older PC-98 games that poll keyboard/mouse while animating
+    cutscenes. The games seem to be timed around the assumption
+    that this call has some delay to it.
+0.82.15
+  - Incorporated x86 FPU emulation from DOSBox SVN to improve FPU
+    precision at least on x86 and x86_64 targets.
+  - PC-98 port 6Ah fixed not to allow setting EGC enable unless
+    another EGC enable bit has been set, as specified in the PC-9801
+    bible.
+  - SVGA mode 0x10A (text mode) fixed to display properly instead
+    of only the top half.
+  - BIOS keyboard handling fixed in PC-98 mode so that Shift+Ro
+    types an underscore as expected.
+  - SVGA emulation (Tseng ET4000 and S3) fixed to reflect real
+    hardware behavior where BYTE/WORD/DWORD VGA bits in the CRTC
+    are ignored in SVGA modes.
+  - Added "debug page flip" and "debug retrace poll" options to
+    the menu.
+  - Added "Swap Floppy" and "Swap CD" commands to the menu.
+  - INT 2Eh (MS-DOS command interpreter interrupt) fixed so that
+    the segment value of the interrupt vector matches the PSP
+    segment of COMMAND.COM. Some DOS applications rely on that
+    segment value as a starting point to enumerate the MCB
+    chain.
+  - PC speaker emulation fixed not to print "queue overrun"
+    messages if the game or demo is attempting to use the PC
+    speaker while pcspeaker=off. 
+  - PC speaker emulation fixed to improve accuracy and to ensure
+    the square wave is synchronized to the 8254 PIT output.
+    This change appears to have improved sound quality with
+    PWM "digitized speech" output.
+  - 8254 emulation fixed to improve overall accuracy
   - 8254 PIT timer emulation fixed not to report writes to PIT 0
     Timer counters if the game is writing the same value
     repeatedly.

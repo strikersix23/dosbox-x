@@ -70,7 +70,7 @@
    */
 #define C_DIRECTSERIAL 1
 
-#ifdef _M_AMD64 /* Microsoft C++ amd64 */
+#if defined (_M_AMD64) || defined (_M_ARM64) || defined (_M_ARM) /* Microsoft C++ amd64, arm32 and arm64 */
 # undef C_DYNAMIC_X86
 # undef C_TARGETCPU
 # define C_DYNREC 1
@@ -87,6 +87,16 @@
 
 /* Define to 1 to enable floating point emulation */
 #define C_FPU					1
+
+/* Define to 1 to use a x86/x64 assembly fpu core */
+/* FIXME: VS2015 x86_64 will not allow inline asm! */
+#ifdef _M_AMD64 /* Microsoft C++ amd64 */
+//TODO
+#elif defined(_M_ARM64) || defined (_M_ARM) /* Microsoft C++ arm32 and arm64 */
+# undef C_FPU_X86
+#else
+# define C_FPU_X86 1
+#endif
 
 /* Determines if the compilers supports attributes for structures. */
 #undef C_HAS_ATTRIBUTE
@@ -122,7 +132,10 @@
 
 /* Define to 1 to use opengl display output support */
 #if !defined(C_SDL2)
+ /* TODO: Windows SDK ARM32 and ARM64 doesn't provide opengl32.lib, find alternatives */
+#if !defined(_M_ARM64) && !defined (_M_ARM)
 #define C_OPENGL 1
+#endif
 #endif
 
 /* Set to 1 to enable SDL 1.x support */
@@ -234,7 +247,7 @@
 /* Define to the version of this package. */
 
 /* The size of `int *', as computed by sizeof. */
-#ifdef _M_AMD64 /* Microsoft C++ amd64 */
+#if defined (_M_AMD64) || defined (_M_ARM64) /* Microsoft C++ amd64 and arm64*/
 # define SIZEOF_INT_P				8
 #else
 # define SIZEOF_INT_P				4

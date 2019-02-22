@@ -201,6 +201,12 @@ void sdl1_hax_make_touch_bar_set_callback(NSTouchBar* (*newcb)(NSWindow*)) {
     }
 }
 
+- (void)appDidChangeScreen:(NSNotification*)note
+{
+    void QZ_ReinitWindow(void);
+    QZ_ReinitWindow();
+}
+
 - (void)appDidUnhide:(NSNotification*)note
 {
     /* restore cached image, since it may not be current, post expose event too */
@@ -222,7 +228,10 @@ void sdl1_hax_make_touch_bar_set_callback(NSTouchBar* (*newcb)(NSWindow*)) {
    
     [ [ NSNotificationCenter defaultCenter ] addObserver:self
         selector:@selector(appWillUnhide:) name:NSApplicationWillUnhideNotification object:NSApp ];
-        
+
+    [ [ NSNotificationCenter defaultCenter ] addObserver:self
+        selector:@selector(appDidChangeScreen:) name:NSWindowDidChangeScreenNotification object:self ];
+
     return [ super initWithContentRect:contentRect styleMask:styleMask backing:backingType defer:flag ];
 }
 
