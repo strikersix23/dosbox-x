@@ -1797,6 +1797,59 @@ struct Text_Draw_State {
 
 Text_Draw_State     pc98_text_draw;
 
+/* NEC PC-9821Lt2 memory layout notes:
+ *
+ * - At first glance, the 8/16 color modes appear to be a sequence of bytes that are read
+ *   in parallel to form 8 or 16 colors.
+ * - Switching on 256-color mode disables the planar memory mapping, and appears to reveal
+ *   how the planar memory is ACTUALLY laid out.
+ * - Much like how VGA planar memory could be thought of as 32 bits per unit, 8 bits per plane,
+ *   PC-98 planar memory seems to behave as 64 bits per unit, 16 bits per plane.
+ * - 256-color mode seems to reveal that the bitplanes exposed at A800, B000, B800, E000
+ *   are in fact just interleaved WORDS in video memory in BGRE order, meaning that the
+ *   first 4 WORDs visible in 256-color mode are the same as, in 16-color mode, the first
+ *   word of (in this order) A800, B800, B000, E000. The traditional E/G/R/B
+ *   (E000, B800, B000, A800) planar order is actually stored in memory in BGRE order.
+ *
+ *   Example:
+ *
+ *      1. Enable 16-color mode
+ *      2. Turn OFF 256-color mode
+ *      3. Write 0x11 0x22 to A800:0000
+ *      4. Write 0x33 0x44 to B000:0000
+ *      5. Write 0x55 0x66 to B800:0000
+ *      6. Write 0x77 0x88 to E000:0000
+ *      7. Turn ON 256-color mode. Memory map will change.
+ *      8. Observe at A800:0000 the values 0x11 0x22 0x55 0x66 0x33 0x44 0x77 0x88
+ *
+ * Also, if you use I/O port A6h to write to page 1 instead of page 0, what you write will
+ * appear in 256-color mode at SVGA memory bank 4 (offset 128KB) instead of memory bank 0
+ * (offset 0KB). Considering 4 planes * 32KB = 128KB this makes sense.
+ *
+ * So either the video memory is planar in design, and the 256-color mode is just the bitplanes
+ * "chained" together (same as 256-color VGA mode), OR, the 256-color mode reflects how memory
+ * is actually laid out and the planar memory is just emulated by packing each bitplane's WORDs
+ * together like that.
+ *
+ * Proper emulation will require determining which is true and rewriting the draw and memory
+ * access code to reflect the true layout so mode changes behave in DOSBox-X exactly as they
+ * behave on real hardware.
+ *
+ * I have a hunch it's the case of 4 16-bit bitplanes shifted a byte at a time since doing that
+ * allows 256-color mode without having to reprogram any other parameters of the GDC.
+ *
+ * However it's very likely the few PC-98 games that use the 256-color mode only care about the
+ * mode as it exists, and that they don't care about what the prior contents of video memory look
+ * like, so this isn't a problem in running the games, only a minor problem in emulation accuracy.
+ *
+ * Very likely, the same as IBM PC games that set up VGA unchained modes and do not necessarily
+ * care what happens to the display of prior video memory contents (except of course some lazy
+ * written code in the Demoscene that switches freely between the two modes).
+ *
+ * Please note this behavior so far has been noted from one PC-9821 laptop. It may be consistent
+ * across other models I have available for testing, or it may not. --J.C.
+ */
+
 static Bit8u* VGA_PC98_Xlat32_Draw_Line(Bitu vidstart, Bitu line) {
     // keep it aligned:
     Bit32u* draw = ((Bit32u*)TempLine);
@@ -1822,36 +1875,52 @@ static Bit8u* VGA_PC98_Xlat32_Draw_Line(Bitu vidstart, Bitu line) {
 
         draw = ((Bit32u*)TempLine);
         blocks = vga.draw.blocks;
-        vidmem = (unsigned int)pc98_gdc[GDC_SLAVE].scan_address << 1u;
-        disp_base = GDC_display_plane ? 0x20000U : 0x00000U;
 
-        while (blocks--) {
-            // NTS: Testing on real hardware shows that, when you switch the GDC back to 8-color mode,
-            //      the 4th bitplane is no longer rendered.
-            if (gdc_analog)
-                e8 = vga.mem.linear[(vidmem & 0x7FFFU) + 0x20000U + disp_base]; /* E0000-E7FFF */
-            else
-                e8 = 0x00;
+        if (pc98_gdc_vramop & (1 << VOPBIT_VGA)) {
+            const unsigned char *s;
 
-            g8 = vga.mem.linear[(vidmem & 0x7FFFU) + 0x18000U + disp_base]; /* B8000-BFFFF */
-            r8 = vga.mem.linear[(vidmem & 0x7FFFU) + 0x10000U + disp_base]; /* B0000-B7FFF */
-            b8 = vga.mem.linear[(vidmem & 0x7FFFU) + 0x08000U + disp_base]; /* A8000-AFFFF */
+            vidmem = (unsigned int)pc98_gdc[GDC_SLAVE].scan_address << (1u+3u); /* as if reading across bitplanes */
+            vidmem += GDC_display_plane ? 0x40000U : 0x00000U;
 
-            for (unsigned char i=0;i < 8;i++) {
-                foreground  = (e8 & 0x80) ? 8 : 0;
-                foreground += (g8 & 0x80) ? 4 : 0;
-                foreground += (r8 & 0x80) ? 2 : 0;
-                foreground += (b8 & 0x80) ? 1 : 0;
+            while (blocks--) {
+                s = (const unsigned char*)(&vga.mem.linear[(vidmem & 0x7FFFFU) + 0x08000U]);
+                for (unsigned char i=0;i < 8;i++) *draw++ = vga.dac.xlat32[*s++];
 
-                e8 <<= 1;
-                g8 <<= 1;
-                r8 <<= 1;
-                b8 <<= 1;
-
-                *draw++ = vga.dac.xlat32[foreground];
+                vidmem += 8;
             }
+        }
+        else {
+            vidmem = (unsigned int)pc98_gdc[GDC_SLAVE].scan_address << 1u;
+            disp_base = GDC_display_plane ? 0x20000U : 0x00000U;
 
-            vidmem++;
+            while (blocks--) {
+                // NTS: Testing on real hardware shows that, when you switch the GDC back to 8-color mode,
+                //      the 4th bitplane is no longer rendered.
+                if (gdc_analog)
+                    e8 = vga.mem.linear[(vidmem & 0x7FFFU) + 0x20000U + disp_base]; /* E0000-E7FFF */
+                else
+                    e8 = 0x00;
+
+                g8 = vga.mem.linear[(vidmem & 0x7FFFU) + 0x18000U + disp_base]; /* B8000-BFFFF */
+                r8 = vga.mem.linear[(vidmem & 0x7FFFU) + 0x10000U + disp_base]; /* B0000-B7FFF */
+                b8 = vga.mem.linear[(vidmem & 0x7FFFU) + 0x08000U + disp_base]; /* A8000-AFFFF */
+
+                for (unsigned char i=0;i < 8;i++) {
+                    foreground  = (e8 & 0x80) ? 8 : 0;
+                    foreground += (g8 & 0x80) ? 4 : 0;
+                    foreground += (r8 & 0x80) ? 2 : 0;
+                    foreground += (b8 & 0x80) ? 1 : 0;
+
+                    e8 <<= 1;
+                    g8 <<= 1;
+                    r8 <<= 1;
+                    b8 <<= 1;
+
+                    *draw++ = vga.dac.xlat32[foreground];
+                }
+
+                vidmem++;
+            }
         }
     }
     else {

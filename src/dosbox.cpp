@@ -130,6 +130,10 @@ extern bool         VIDEO_BIOS_always_carry_16_high_font;
 extern bool         VIDEO_BIOS_enable_CGA_8x8_second_half;
 extern bool         allow_more_than_640kb;
 
+Bit32u              guest_msdos_LoL = 0;
+Bit16u              guest_msdos_mcb_chain = 0;
+int                 boothax = BOOTHAX_NONE;
+
 bool                dos_con_use_int16_to_detect_input = true;
 
 bool                dbg_zero_on_dos_allocmem = true;
@@ -278,21 +282,6 @@ unsigned long long update_clockdom_from_now(ClockDomain &dst) {
     return dst.counter;
 }
 
-/* for ISA components that rely on dividing down from OSC */
-unsigned long long update_ISA_OSC_clock() {
-    return update_clockdom_from_now(clockdom_ISA_OSC);
-}
-
-/* for ISA components */
-unsigned long long update_ISA_BCLK_clock() {
-    return update_clockdom_from_now(clockdom_ISA_BCLK);
-}
-
-/* for PCI components */
-unsigned long long update_PCI_BCLK_clock() {
-    return update_clockdom_from_now(clockdom_PCI_BCLK);
-}
-
 #include "paging.h"
 
 extern bool rom_bios_vptable_enable;
@@ -344,7 +333,7 @@ static Bitu Normal_Loop(void) {
                     return 1;
 
                 if (ret>0) {
-                    if (GCC_UNLIKELY(ret >= CB_MAX))
+                    if (GCC_UNLIKELY((unsigned int)ret >= CB_MAX))
                         return 0;
 
                     extern unsigned int last_callback;
@@ -916,7 +905,16 @@ void DOSBOX_SetupConfigSections(void) {
 //    const char* joydeadzone[] = { "0.26", 0 };
 //    const char* joyresponse[] = { "1.0", 0 };
     const char* iosgus[] = { "240", "220", "260", "280", "2a0", "2c0", "2e0", "300", "210", "230", "250", 0 };
-    const char* ios[] = { "220", "240", "260", "280", "2a0", "2c0", "2e0", "300", 0 };
+    const char* mpubases[] = {
+        "0",                                                                                    /* Auto */
+        "300", "310", "320", "330", "332", "334", "336", "340", "360",                          /* IBM PC */
+        "c0d0","c8d0","d0d0","d8d0","e0d0","e8d0","f0d0","f8d0",                                /* NEC PC-98 MPU98 */
+        "80d2","80d4","80d6","80d8","80da","80dc","80de",                                       /* NEC PC-98 SB16 */
+        0 };
+    const char* ios[] = {
+        "220", "240", "260", "280", "2a0", "2c0", "2e0",            /* IBM PC      (base+port i.e. 220h base, 22Ch is DSP) */
+        "d2",  "d4",  "d6",  "d8",  "da",  "dc",  "de",             /* NEC PC-98   (base+(port << 8) i.e. 00D2h base, 2CD2h is DSP) */
+        0 };
     const char* ems_settings[] = { "true", "emsboard", "emm386", "false", 0};
     const char* irqsgus[] = { "5", "3", "7", "9", "10", "11", "12", 0 };
     const char* irqssb[] = { "7", "5", "3", "9", "10", "11", "12", 0 };
@@ -953,7 +951,7 @@ void DOSBOX_SetupConfigSections(void) {
         "advmame2x", "advmame3x", "advinterp2x", "advinterp3x", "hq2x", "hq3x", "2xsai", "super2xsai", "supereagle",
 #endif
 #if RENDER_USE_ADVANCED_SCALERS>0
-        "tv2x", "tv3x", "rgb2x", "rgb3x", "scan2x", "scan3x",
+        "tv2x", "tv3x", "rgb2x", "rgb3x", "scan2x", "scan3x", "gray", "gray2x",
 #endif
         "hardware_none", "hardware2x", "hardware3x", "hardware4x", "hardware5x",
 #if C_XBRZ
@@ -1282,6 +1280,9 @@ void DOSBOX_SetupConfigSections(void) {
         "        or 386DX and 486 systems where the CPU communicated directly with the ISA bus (A24-A31 tied off)\n"
         "    26: 64MB aliasing. Some 486s had only 26 external address bits, some motherboards tied off A26-A31");
 
+    Pbool = secprop->Add_bool("pc-98 BIOS copyright string",Property::Changeable::WhenIdle,false);
+    Pbool->Set_help("If set, the PC-98 BIOS copyright string is placed at E800:0000. Enable this for software that detects PC-98 vs Epson.");
+
     Pbool = secprop->Add_bool("pc-98 int 1b fdc timer wait",Property::Changeable::WhenIdle,false);
     Pbool->Set_help("If set, INT 1Bh floppy access will wait for the timer to count down before returning.\n"
                     "This is needed for Ys II to run without crashing.");
@@ -1309,6 +1310,9 @@ void DOSBOX_SetupConfigSections(void) {
     Pbool = secprop->Add_bool("pc-98 buffer page flip",Property::Changeable::WhenIdle,false);
     Pbool->Set_help("If set, the game's request to page flip will be delayed to vertical retrace, which can eliminate tearline artifacts.\n"
                     "Note that this is NOT the behavior of actual hardware. This option is provided for the user's preference.");
+
+    Pbool = secprop->Add_bool("pc-98 enable 256-color",Property::Changeable::WhenIdle,true);
+    Pbool->Set_help("Allow 256-color graphics mode if set, disable if not set");
 
     Pbool = secprop->Add_bool("pc-98 enable 16-color",Property::Changeable::WhenIdle,true);
     Pbool->Set_help("Allow 16-color graphics mode if set, disable if not set");
@@ -1690,6 +1694,19 @@ void DOSBOX_SetupConfigSections(void) {
         "Best fits image to window\n"
         "- Intended for output=direct3d, fullresolution=original, aspect=true");
 
+    Pmulti = secprop->Add_multi("monochrome_pal",Property::Changeable::Always," ");
+    Pmulti->SetValue("green",/*init*/true);
+    Pmulti->Set_help("Specify the color of monochrome display.\n"
+        "Possible values: green, amber, gray, white\n"
+        "Append 'bright' for a brighter look.");
+    Pstring = Pmulti->GetSection()->Add_string("color",Property::Changeable::Always,"green");
+    const char* monochrome_pal_colors[]={
+      "green","amber","gray","white",0
+    };
+    Pstring->Set_values(monochrome_pal_colors);
+    Pstring = Pmulti->GetSection()->Add_string("bright",Property::Changeable::Always,"");
+    const char* bright[] = { "", "bright", 0 };
+    Pstring->Set_values(bright);
 
     secprop=control->AddSection_prop("vsync",&Null_Init,true);//done
 
@@ -1789,9 +1806,10 @@ void DOSBOX_SetupConfigSections(void) {
     Pint->SetMinMax(1,1000000);
     Pint->Set_help("Setting it lower than 100 will be a percentage.");
 
-    Pbool = secprop->Add_bool("use dynamic core with paging on",Property::Changeable::Always,false);
-    Pbool->Set_help("Dynamic core is NOT compatible with the way page faults in the guest are handled in DosBox-X.\n"
-            "Windows 9x may crash with paging on if dynamic core is enabled. Enable at your own risk.\n");
+    Pbool = secprop->Add_bool("use dynamic core with paging on",Property::Changeable::Always,true);
+    Pbool->Set_help("Allow dynamic core with 386 paging enabled. This is generally OK for DOS games and Windows 3.1.\n"
+                    "If the game becomes unstable, turn off this option.\n"
+                    "WARNING: Do NOT use this option with preemptive multitasking OSes including Windows 95 and Windows NT.");
             
     Pbool = secprop->Add_bool("ignore opcode 63",Property::Changeable::Always,true);
     Pbool->Set_help("When debugging, do not report illegal opcode 0x63.\n"
@@ -1894,6 +1912,15 @@ void DOSBOX_SetupConfigSections(void) {
     Pstring->Set_values(mputypes);
     Pstring->Set_help("Type of MPU-401 to emulate.");
 
+    Phex = secprop->Add_hex("mpubase",Property::Changeable::WhenIdle,0/*default*/);
+    Phex->Set_values(mpubases);
+    Phex->Set_help("The IO address of the MPU-401.\n"
+                   "Set to 0 to use a default I/O address.\n"
+                   "300h to 330h are for use with IBM PC mode.\n"
+                   "C0D0h to F8D0h (in steps of 800h) are for use with NEC PC-98 mode (MPU98).\n"
+                   "80D2h through 80DEh are for use with NEC PC-98 Sound Blaster 16 MPU-401 emulation.\n"
+                   "If not assigned (0), 330h is the default for IBM PC and E0D0h is the default for PC-98.");
+
     Pstring = secprop->Add_string("mididevice",Property::Changeable::WhenIdle,"default");
     Pstring->Set_values(devices);
     Pstring->Set_help("Device that will receive the MIDI data from MPU-401.");
@@ -1976,7 +2003,9 @@ void DOSBOX_SetupConfigSections(void) {
 
     Phex = secprop->Add_hex("sbbase",Property::Changeable::WhenIdle,0x220);
     Phex->Set_values(ios);
-    Phex->Set_help("The IO address of the soundblaster.");
+    Phex->Set_help("The IO address of the soundblaster.\n"
+                   "220h to 2E0h are for use with IBM PC Sound Blaster emulation.\n"
+                   "D2h to DEh are for use with NEC PC-98 Sound Blaster 16 emulation.");
 
     Pint = secprop->Add_int("irq",Property::Changeable::WhenIdle,7);
     Pint->Set_values(irqssb);

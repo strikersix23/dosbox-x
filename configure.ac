@@ -1,5 +1,5 @@
 dnl Init.
-AC_INIT(dosbox-x,0.82.16,[https://github.com/joncampbell123/dosbox-x/issues],[],[http://dosbox-x.software])
+AC_INIT(dosbox-x,0.82.18,[https://github.com/joncampbell123/dosbox-x/issues],[],[http://dosbox-x.software])
 AC_PREREQ(2.60)
 AC_CONFIG_SRCDIR(README)
 
@@ -532,6 +532,11 @@ dnl LIBRARY TEST: libpcap
 AC_CHECK_HEADER(pcap.h,have_pcap_h=yes,)
 AC_CHECK_LIB(pcap, pcap_open_live, have_pcap_lib=yes, ,-lz)
 
+dnl LIBRARY TEST: libiconv
+dnl This may be provided by glibc itself, -liconv may not be needed.
+AC_CHECK_HEADER(iconv.h,have_iconv_h=yes,)
+AC_CHECK_LIB(iconv, libiconv_open, have_iconv_lib=yes, ,-liconv)
+
 # FIXME: Arrggh we need the WHOLE PATH
 pwd=`pwd`
 
@@ -936,11 +941,6 @@ dnl FEATURE: Whether to use OpenGL
 AH_TEMPLATE(C_OPENGL,[Define to 1 to use opengl display output support])
 AC_ARG_ENABLE(opengl,AC_HELP_STRING([--disable-opengl],[Disable opengl support]),,enable_opengl=yes)
 AC_MSG_CHECKING(whether opengl display output will be enabled)
-
-# HACK: Don't enable OPENGL on SDL2
-if test -n "$SDL2_LIBS"; then
-    enable_opengl=no
-fi
 
 # test
 if test x$enable_opengl = xyes; then

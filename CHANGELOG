@@ -1,4 +1,109 @@
-0.82.16 (next)
+0.82.18 (next)
+  - Added basic 256-color mode emulation to PC-98 mode.
+    Linear framebuffer, needed by PC-98 ports of DOOM and
+    Wolfenstein 3D, is implemented. Bank switching, needed
+    by a few PC-98 games, is implemented. 
+  - MPU-401 emulation now accepts dosbox.conf option "mpubase"
+    to control the base I/O port of the MPU-401 interface.
+    The option can be set to "0" to tell DOSBox-X to pick the
+    best default. Works in either IBM PC or NEC PC-98 mode.
+    See dosbox.reference.conf for more details.
+  - Fixed Sound Blaster 16 mixer IRQ/DMA select registers
+    to work in PC-98 mode as they apparently do on real
+    hardware.
+  - Sound Blaster 16 and Adlib emulation now available in
+    NEC PC-98 mode. I/O port mapping is based on a real
+    SB16 card for PC-98 and some documentation. Only OPL3
+    emulation is supported for Adlib. sbtype must be set
+    to sb16.
+  - NEC PC-98 emulation mode now emulates DMA controller.
+  - Gravis Ultrasound emulation now allows game to read back
+    the channel's Pan Pot register.
+  - Sound Blaster 16 now implements 0xF9/0xFA fully, even if
+    the RAM contents they expose are not fully implemented.
+  - Sound Blaster DSP command E2h (DMA identification/test)
+    code cleaned up and simplified.
+0.82.17
+  - Fixed yellowish tint of tv3x scaler on SDL1 builds of
+    Mac OS X.
+  - Fixed hq2x/hq3x and the various sai render scalers to
+    render correctly on SDL1 builds of Mac OS X (where the
+    odd BGRA color order is used). Prior to this fix the
+    scaler output had a very strong yellow tint (missing
+    or misrendered blue channel).
+  - Fixed basic scaler template code to render correct RGBA
+    colors in SDL1 builds for Mac OS X.
+  - New grayscale scaler option, to emulate monochrome VGA
+    monitors (frank-deng)
+  - Menu handling cleanup from within Pause loop, including
+    Mac OS X menu problems when invoking pause from the
+    menu bar.
+  - Shell welcome text fixed to show consistent first line in
+    both IBM PC and PC-98 mode.
+  - Pause mode fixed to handle mouse input while paused, so that
+    SDL drawn menus (on Linux or HX DOS) continue to work while
+    paused.
+  - Added dosbox.conf option (off by default) to add the
+    NEC PC-98 copyright string at E800:0DD8 for games and
+    applications that require it.
+  - Debugger can now show guest MS-DOS kernel MCB chain if you
+    boot an MS-DOS floppy or hard disk image using
+    BOOT --boothax msdos. For use with MS-DOS 3.3 or higher
+    including the real mode MS-DOS environment of Windows 95.
+
+    WARNING: Use boothax msdos ONLY with real mode MS-DOS, do
+    not use with the protected mode environment (desktop) of
+    Windows 95 especially a DOS VM within Windows. Use with
+    MS-DOS and a DOS extender (DOS4GW, etc) should be OK.
+
+  - Added "--boothax <mode>" option to BOOT command. At this
+    time <mode> is limited to "msdos" to instruct the emulation
+    to intercept specific INT 21h calls to locate the MS-DOS
+    kernel's List of List and MCB chain structures for use with
+    the debugger.
+  - "TV" scaler updated to render dimmer alternate scanlines
+    in CGA graphics modes (frank-deng)
+  - Direct3D output no longer leaves DOS screen frozen when
+    Direct3D device is "lost" (such as hitting CTRL+ALT+DEL
+    to bring up the Windows C+A+D screen).
+  - Page fault handling on by default now for dynamic core,
+    DOS games and Windows 3.1 seem to handle it OK.
+  - Page fault handling no longer use non-recursive page fault
+    method with dynamic core, no matter what. It's too unreliable.
+  - PC-98 mode now switches PIT Timer 2 clock gate ON by default
+    to satisfy delay loops in Sunsoft "Photo Genic" and allow it
+    to run. Note that PIT Timer 2 drives the baud rate clock of
+    the RS-232C port.
+  - IDE emulation bug fixed that prevented BIOS to IDE
+    geometry translation when BIOS head count == 255. This
+    fix also allows Windows 95 to use it's IDE driver with
+    >= 4GB hard drives instead of running in MS-DOS compatibility
+    mode.
+  - Disk image support fixed to allow 4GB or larger hard disk
+    images to work again.
+  - FPU x86 core no longer calls E_Exit if the FPU stack
+    overflows or underflows.
+  - Updated build-debug scripts to accept "32" on the command
+    line as a sign to compile 32-bit (i686) on a 64-bit (x86_64)
+    system. You will need a multilib-capable GCC and 32-bit
+    libraries installed on your system for this to work.
+  - SDL2 OpenGL fixed color order issue
+  - OpenGL is now supported in SDL2 builds.
+  - Changed MPU-401 reset duration (DOSBox SVN).
+0.82.16
+  - SDL1 support fixed to gracefully handle a case where,
+    under Windows XP, with a audio device that is not cycling
+    any audio DMA, DOSBox-X can hang on shutdown.
+  - SDL drawn menus now shift and adjust popup menu position
+    to ensure the popup is entirely within the screen in cases
+    where the window is too small. Redraw issues related to
+    that (overlapping item and popup menus) have been fixed.
+    Minimum window resolution has been reduced to 500x300,
+    enough to permit EGA 640x350 displays without a black
+    border.
+  - Fixed INT 18h AH=13h not to automatically show the cursor
+    (PC-98 fix), which fixes the visible blinking cursor
+    problem during games.
   - VS2017 project files can now compile DOSBox-X to run on
     ARM versions of Windows RT (driver1998)
   - Local filesystem support fixed to sanitize DOS dates
@@ -31,7 +136,9 @@
   - Windows MinGW builds now properly support and enable the
     Direct3D output
   - Mac OS X builds now contain the correct version number in
-    the application plist.
+    the application plist. Using the Finder's Information window
+    on the compiled application bundle will now show correct
+    version information.
   - SDL1 builds fixed to always compile with internal SDL_net
     library instead of public library on the system
   - Mac OS X SDL1 builds fixed to always clip the desktop
@@ -71,7 +178,9 @@
   - PC-98 INT 18h AH=04h: Added software delay to slow down some
     older PC-98 games that poll keyboard/mouse while animating
     cutscenes. The games seem to be timed around the assumption
-    that this call has some delay to it.
+    that this call has some delay to it. This fixes problems with
+    "Shangrlia" by Elf corporation and animation that runs way
+    too fast.
 0.82.15
   - Incorporated x86 FPU emulation from DOSBox SVN to improve FPU
     precision at least on x86 and x86_64 targets.

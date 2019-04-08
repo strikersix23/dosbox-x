@@ -55,6 +55,7 @@ typedef enum scalerOperation {
 	scalerOpTV,
 	scalerOpRGB,
 	scalerOpScan,
+	scalerOpGray,
 #endif
 	scalerLast
 } scalerOperation_t;
@@ -117,11 +118,17 @@ extern ScalerSimpleBlock_t ScaleNormal4x;
 extern ScalerSimpleBlock_t ScaleNormal5x;
 #if RENDER_USE_ADVANCED_SCALERS>0
 extern ScalerSimpleBlock_t ScaleTV2x;
+extern ScalerSimpleBlock_t ScaleTVDh;
 extern ScalerSimpleBlock_t ScaleTV3x;
 extern ScalerSimpleBlock_t ScaleRGB2x;
 extern ScalerSimpleBlock_t ScaleRGB3x;
 extern ScalerSimpleBlock_t ScaleScan2x;
+extern ScalerSimpleBlock_t ScaleScanDh;
 extern ScalerSimpleBlock_t ScaleScan3x;
+extern ScalerSimpleBlock_t ScaleGrayNormal;
+extern ScalerSimpleBlock_t ScaleGrayDw;
+extern ScalerSimpleBlock_t ScaleGrayDh;
+extern ScalerSimpleBlock_t ScaleGray2x;
 #endif
 /* Complex scalers */
 #if RENDER_USE_ADVANCED_SCALERS>2

@@ -809,6 +809,15 @@ void TIMER_BIOS_INIT_Configure() {
             (phys_readb(0x501) & 0x7F) |
             ((PIT_TICK_RATE == PIT_TICK_RATE_PC98_8MHZ) ? 0x80 : 0x00)      /* bit 7: 1=8MHz  0=5MHz/10MHz */
             );
+
+        /* The timer is always on, there's no clock gate that I know of.
+         * There's a bit 6 port 434h that might gate it on some hardware, but that doesn't seem to be the case on anything I have.
+         *
+         * NTS: If you run 8254.EXE from DOSLIB on PC-98 hardware and notice PIT 2 isn't cycling, try writing values to 75h
+         *      and see if it begins counting again. A PC-9821Lt2 laptop seems to have a bios that writes a mode byte for
+         *      it to 77h but then never writes to 75h, which leaves the timer idle. */
+        pit[2].track_time(PIC_FullIndex());
+        pit[2].set_gate(true);
     }
 }
 

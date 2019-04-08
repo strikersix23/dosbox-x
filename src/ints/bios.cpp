@@ -58,6 +58,10 @@ extern bool PS1AudioCard;
 # define S_ISREG(x) ((x & S_IFREG) == S_IFREG)
 #endif
 
+const std::string pc98_copyright_str = "Copyright (C) 1983 by NEC Corporation / Microsoft Corp.\x0D\x0A";
+
+bool enable_pc98_copyright_string = false;
+
 /* mouse.cpp */
 extern bool en_bios_ps2mouse;
 extern bool rom_bios_8x8_cga_font;
@@ -70,6 +74,7 @@ Bitu bios_post_parport_count();
 Bitu bios_post_comport_count();
 bool KEYBOARD_Report_BIOS_PS2Mouse();
 bool MEM_map_ROM_alias_physmem(Bitu start,Bitu end);
+void pc98_update_palette(void);
 
 bool bochs_port_e9 = false;
 bool isa_memory_hole_512kb = false;
@@ -2423,6 +2428,7 @@ extern bool                         gdc_5mhz_mode;
 extern bool                         enable_pc98_egc;
 extern bool                         enable_pc98_grcg;
 extern bool                         enable_pc98_16color;
+extern bool                         enable_pc98_256color;
 extern bool                         enable_pc98_188usermod;
 extern bool                         pc98_31khz_mode;
 extern bool                         pc98_attr4_graphic;
@@ -2657,7 +2663,6 @@ static Bitu INT18_PC98_Handler(void) {
 
             pc98_gdc[GDC_MASTER].force_fifo_complete();
             vga_pc98_direct_cursor_pos(reg_dx >> 1);
-            pc98_gdc[GDC_MASTER].cursor_enable = true; // FIXME: Right?
             break;
         case 0x14: /* read FONT RAM */
             {
@@ -2719,6 +2724,12 @@ static Bitu INT18_PC98_Handler(void) {
                     vga.mem.linear[i+1] = 0x00;
                 }
             }
+            break;
+        case 0x17: /* BELL ON */
+            IO_WriteB(0x37,0x06);
+            break;
+        case 0x18: /* BELL OFF */
+            IO_WriteB(0x37,0x07);
             break;
         case 0x1A: /* load FONT RAM */
             {
@@ -2884,6 +2895,23 @@ static Bitu INT18_PC98_Handler(void) {
                 LOG_MSG("PC-98 INT 18 AH=43h CX=0x%04X DS=0x%04X", reg_cx, SegValue(ds));
                 break;
             }
+        case 0x4D:  // 256-color enable
+            if (reg_ch == 1) {
+                void pc98_port6A_command_write(unsigned char b);
+                pc98_port6A_command_write(0x07);        // enable EGC
+                pc98_port6A_command_write(0x01);        // enable 16-color
+                pc98_port6A_command_write(0x21);        // enable 256-color
+                PC98_show_cursor(false);                // apparently hides the cursor?
+            }
+            else if (reg_ch == 0) {
+                void pc98_port6A_command_write(unsigned char b);
+                pc98_port6A_command_write(0x20);        // disable 256-color
+                PC98_show_cursor(false);                // apparently hides the cursor?
+            }
+            else {
+                LOG_MSG("PC-98 INT 18h AH=4Dh unknown CH=%02xh",reg_ch);
+            }
+            break;
         default:
             LOG_MSG("PC-98 INT 18h unknown call AX=%04X BX=%04X CX=%04X DX=%04X SI=%04X DI=%04X DS=%04X ES=%04X",
                 reg_ax,
@@ -3857,7 +3885,7 @@ static Bitu INTGEN_PC98_Handler(void) {
  * On actual PC-98 MS-DOS this is a direct interface to MS-DOS's built-in ANSI CON driver.
  *
  * CL = major function call number
- * AL = minor function call number
+ * AH = minor function call number
  * DX = data?? */
 extern bool dos_kernel_disabled;
 
@@ -3886,9 +3914,24 @@ static Bitu INTDC_PC98_Handler(void) {
             else if (reg_ah == 0x02) { /* CL=0x10 AH=0x02 DL=attribute set console output attribute */
                 /* Ref: https://nas.jmc/jmcs/docs/browse/Computer/Platform/PC%2c%20NEC%20PC%2d98/Collections/Undocumented%209801%2c%209821%20Volume%202%20%28webtech.co.jp%29%20English%20translation/memdos%2eenglish%2dgoogle%2dtranslate%2etxt
                  *
-                 * DL is the attribute byte (in the format written directly to video RAM, not the ANSI code) */
+                 * DL is the attribute byte (in the format written directly to video RAM, not the ANSI code)
+                 *
+                 * NTS: Reverse engineering INT DCh shows it sets both 71Dh and 73Ch as below */
                 mem_writeb(0x71D,reg_dl);   /* 60:11D */
+                mem_writeb(0x73C,reg_dx);   /* 60:13C */
                 goto done;
+            }
+            else if (reg_ah == 0x03) { /* CL=0x10 AH=0x03 CL=Y-coord CH=X-coord set cursor position */
+                /* Reverse engineered from INT DCh. Note that the code path is the same taken for ESC = */
+                goto unknown; /* TODO: */
+            }
+            else if (reg_ah == 0x04) { /* CL=0x10 AH=0x04 Move cursor down one line */
+                /* Reverse engineered from INT DCh. Note that the code path is the same taken for ESC E */
+                goto unknown; /* TODO: */
+            }
+            else if (reg_ah == 0x05) { /* CL=0x10 AH=0x05 Move cursor up one line */
+                /* Reverse engineered from INT DCh. Note that the code path is the same taken for ESC M */
+                goto unknown; /* TODO: */
             }
             goto unknown;
         default: /* some compilers don't like not having a default case */
@@ -5583,7 +5626,11 @@ void gdc_16color_enable_update_vars(void) {
     b &= ~0x04;
     if (enable_pc98_16color) b |= 0x04;
     mem_writeb(0x54C,b);
-    
+
+    if(!enable_pc98_256color) {//force switch to 16-colors mode
+        void pc98_port6A_command_write(unsigned char b);
+        pc98_port6A_command_write(0x20);
+    }
     if(!enable_pc98_16color) {//force switch to 8-colors mode
         void pc98_port6A_command_write(unsigned char b);
         pc98_port6A_command_write(0x00);
@@ -7146,6 +7193,8 @@ public:
         { // TODO: Eventually, move this to BIOS POST or init phase
             Section_prop * section=static_cast<Section_prop *>(control->GetSection("dosbox"));
 
+            enable_pc98_copyright_string = section->Get_bool("pc-98 BIOS copyright string");
+
             bochs_port_e9 = section->Get_bool("bochs debug port e9");
 
             // TODO: motherboard init, especially when we get around to full Intel Triton/i440FX chipset emulation
@@ -7393,6 +7442,15 @@ public:
 
                 phys_writeb(bo+0x04,0xEB);                             // JMP $-2
                 phys_writeb(bo+0x05,0xFE);
+            }
+
+            if (IS_PC98_ARCH && enable_pc98_copyright_string) {
+                size_t i=0;
+
+                for (;i < pc98_copyright_str.length();i++)
+                    phys_writeb(0xE8000 + 0x0DD8 + i,pc98_copyright_str[i]);
+
+                phys_writeb(0xE8000 + 0x0DD8 + i,0);
             }
         }
     }
@@ -7752,6 +7810,11 @@ void ROMBIOS_Init() {
 
     write_ID_version_string();
 
+    if (IS_PC98_ARCH && enable_pc98_copyright_string) { // PC-98 BIOSes have a copyright string at E800:0DD8
+        if (ROMBIOS_GetMemory(pc98_copyright_str.length()+1,"PC-98 copyright string",1,0xE8000 + 0x0DD8) == 0)
+            LOG_MSG("WARNING: Was not able to mark off E800:0DD8 off-limits for PC-98 copyright string");
+    }
+ 
     /* some structures when enabled are fixed no matter what */
     if (rom_bios_8x8_cga_font && !IS_PC98_ARCH) {
         /* line 139, int10_memory.cpp: the 8x8 font at 0xF000:FA6E, first 128 chars.
@@ -7791,7 +7854,7 @@ void ROMBIOS_Init() {
         std::string path = section->Get_string("call binary on reset");
         struct stat st;
 
-        if (!path.empty() && stat(path.c_str(),&st) == 0 && S_ISREG(st.st_mode) && st.st_size <= (128u*1024u)) {
+        if (!path.empty() && stat(path.c_str(),&st) == 0 && S_ISREG(st.st_mode) && st.st_size <= (off_t)(128u*1024u)) {
             Bitu base = ROMBIOS_GetMemory((Bitu)st.st_size,"User reset vector binary",16u/*page align*/,0u);
 
             if (base != 0) {
@@ -7826,7 +7889,7 @@ void ROMBIOS_Init() {
         std::string path = section->Get_string("call binary on boot");
         struct stat st;
 
-        if (!path.empty() && stat(path.c_str(),&st) == 0 && S_ISREG(st.st_mode) && st.st_size <= (128u*1024u)) {
+        if (!path.empty() && stat(path.c_str(),&st) == 0 && S_ISREG(st.st_mode) && st.st_size <= (off_t)(128u*1024u)) {
             Bitu base = ROMBIOS_GetMemory((Bitu)st.st_size,"User boot hook binary",16u/*page align*/,0u);
 
             if (base != 0) {

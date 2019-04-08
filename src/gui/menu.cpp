@@ -30,6 +30,11 @@
 #include "timer.h"
 #include "inout.h"
 
+#if DOSBOXMENU_TYPE == DOSBOXMENU_SDLDRAW
+unsigned int min_sdldraw_menu_width = 500;
+unsigned int min_sdldraw_menu_height = 300;
+#endif
+
 #if DOSBOXMENU_TYPE == DOSBOXMENU_NSMENU /* Mac OS X menu handle */
 void                                                sdl_hax_nsMenuAddApplicationMenu(void *nsMenu);
 void*                                               sdl_hax_nsMenuItemFromTag(void *nsMenu, unsigned int tag);
@@ -234,10 +239,10 @@ static const char *def_menu_video_output[] =
 # if (HAVE_D3D9_H) && defined(WIN32)
     "output_direct3d",
 # endif
-# if (C_OPENGL)
+#endif
+#if defined(C_OPENGL) && !defined(HX_DOS)
     "output_opengl",
     "output_openglnb",
-# endif
 #endif
     NULL
 };
@@ -291,6 +296,7 @@ static const char *def_menu_video_pc98[] =
     "pc98_enable_egc",
     "pc98_enable_grcg",
     "pc98_enable_analog",
+    "pc98_enable_analog256",
     "pc98_enable_188user",
     "--",
     "pc98_clear_text",
@@ -1090,7 +1096,7 @@ void ConstructMenu(void) {
                     mainMenu.get_item_id_by_name(name));
 
 #if DOSBOXMENU_TYPE == DOSBOXMENU_SDLDRAW
-                if ((count % 14) == 13) {
+                if ((count % 15) == 14) {
                     mainMenu.displaylist_append(
                         mainMenu.get_item("VideoScalerMenu").display_list,
                         separator_get(DOSBoxMenu::vseparator_type_id));
@@ -1714,7 +1720,6 @@ DOSBoxMenu::item &DOSBoxMenu::item::setHilight(DOSBoxMenu &menu,bool hi) {
     (void)menu;//UNUSED
     if (itemHilight != hi) {
         itemHilight = hi;
-        needRedraw = true;
     }
 
     return *this;
@@ -1724,7 +1729,6 @@ DOSBoxMenu::item &DOSBoxMenu::item::setHover(DOSBoxMenu &menu,bool ho) {
     (void)menu;//UNUSED
     if (itemHover != ho) {
         itemHover = ho;
-        needRedraw = true;
     }
 
     return *this;
@@ -1794,6 +1798,7 @@ void DOSBoxMenu::updateRect(void) {
 #if 0
     LOG_MSG("SDL menuBox w=%d h=%d",menuBox.w,menuBox.h);
 #endif
+    layoutMenu();
 }
 
 void DOSBoxMenu::layoutMenu(void) {
@@ -1877,6 +1882,46 @@ void DOSBoxMenu::item::layoutSubmenu(DOSBoxMenu &menu, bool isTopLevel) {
 
     popupBox.w = maxx - popupBox.x;
     popupBox.h = y - popupBox.y;
+
+    /* keep it on the screen if possible */
+    {
+        int new_y = 0;
+
+        new_y = popupBox.y;
+        if ((new_y + (int)popupBox.h) > (int)menu.screenHeight)
+            new_y = (int)menu.screenHeight - popupBox.h;
+        if (new_y < ((int)menu.menuBarHeight - 1))
+            new_y = ((int)menu.menuBarHeight - 1);
+
+        int adj_y = new_y - popupBox.y;
+        if (adj_y != 0) {
+            popupBox.y += adj_y;
+
+            for (auto &i : display_list.disp_list) {
+                DOSBoxMenu::item &item = menu.get_item(i);
+                item.screenBox.y += adj_y;
+            }
+        }
+    }
+    {
+        int new_x = 0;
+
+        new_x = popupBox.x;
+        if ((new_x + (int)popupBox.w) > (int)menu.screenWidth)
+            new_x = (int)menu.screenWidth - popupBox.w;
+        if (new_x < (int)0)
+            new_x = (int)0;
+
+        int adj_x = new_x - popupBox.x;
+        if (adj_x != 0) {
+            popupBox.x += adj_x;
+
+            for (auto &i : display_list.disp_list) {
+                DOSBoxMenu::item &item = menu.get_item(i);
+                item.screenBox.x += adj_x;
+            }
+        }
+    }
 
     /* 1 pixel border, top */
     if (!isTopLevel) {

@@ -79,6 +79,21 @@ static INLINE void ScalerAddLines( Bitu changed, Bitu count ) {
 	while (bsize--) *bdst++=*bsrc++;		\
 }
 
+#if !defined(C_SDL2) && defined(MACOSX)
+/* SDL1 builds are subject to Mac OS X strange BGRA (alpha in low byte) order.
+   The code in the #else case happens to work because most OSes put the alpha byte in the upper 32 bits,
+   while on Mac OS X the blue channel is up there. Integer overflow will trash the blue channel in that
+   case, without this alternate code. */
+#define interp_w2(P0,P1,W0,W1)															\
+	((((uint64_t)(P0&redblueMask)*(uint64_t)W0+(uint64_t)(P1&redblueMask)*(uint64_t)W1)/(uint64_t)(W0+W1)) & redblueMask) |	\
+	((((uint64_t)(P0&  greenMask)*(uint64_t)W0+(uint64_t)(P1&  greenMask)*(uint64_t)W1)/(uint64_t)(W0+W1)) & greenMask)
+#define interp_w3(P0,P1,P2,W0,W1,W2)														\
+	((((uint64_t)(P0&redblueMask)*(uint64_t)W0+(uint64_t)(P1&redblueMask)*(uint64_t)W1+(uint64_t)(P2&redblueMask)*(uint64_t)W2)/(uint64_t)(W0+W1+W2)) & redblueMask) |	\
+	((((uint64_t)(P0&  greenMask)*(uint64_t)W0+(uint64_t)(P1&  greenMask)*(uint64_t)W1+(uint64_t)(P2&  greenMask)*(uint64_t)W2)/(uint64_t)(W0+W1+W2)) & greenMask)
+#define interp_w4(P0,P1,P2,P3,W0,W1,W2,W3)														\
+	((((uint64_t)(P0&redblueMask)*(uint64_t)W0+(uint64_t)(P1&redblueMask)*(uint64_t)W1+(uint64_t)(P2&redblueMask)*(uint64_t)W2+(uint64_t)(P3&redblueMask)*(uint64_t)W3)/(uint64_t)(W0+W1+W2+W3)) & redblueMask) |	\
+	((((uint64_t)(P0&  greenMask)*(uint64_t)W0+(uint64_t)(P1&  greenMask)*(uint64_t)W1+(uint64_t)(P2&  greenMask)*(uint64_t)W2+(uint64_t)(P3&  greenMask)*(uint64_t)W3)/(uint64_t)(W0+W1+W2+W3)) & greenMask)
+#else
 #define interp_w2(P0,P1,W0,W1)															\
 	((((P0&redblueMask)*W0+(P1&redblueMask)*W1)/(W0+W1)) & redblueMask) |	\
 	((((P0&  greenMask)*W0+(P1&  greenMask)*W1)/(W0+W1)) & greenMask)
@@ -88,7 +103,7 @@ static INLINE void ScalerAddLines( Bitu changed, Bitu count ) {
 #define interp_w4(P0,P1,P2,P3,W0,W1,W2,W3)														\
 	((((P0&redblueMask)*W0+(P1&redblueMask)*W1+(P2&redblueMask)*W2+(P3&redblueMask)*W3)/(W0+W1+W2+W3)) & redblueMask) |	\
 	((((P0&  greenMask)*W0+(P1&  greenMask)*W1+(P2&  greenMask)*W2+(P3&  greenMask)*W3)/(W0+W1+W2+W3)) & greenMask)
-
+#endif
 
 #define CC scalerChangeCache
 
@@ -325,6 +340,23 @@ ScalerSimpleBlock_t ScaleTV2x = {
 {	0,		TV2x_9_15_R ,	TV2x_9_16_R ,	TV2x_9_32_R }
 }};
 
+ScalerSimpleBlock_t ScaleTVDh = {
+	"TV2x",
+	GFX_CAN_15|GFX_CAN_16|GFX_CAN_32|GFX_RGBONLY,
+	1,2,{
+{	0,		TVDh_8_15_L ,	TVDh_8_16_L ,	TVDh_8_32_L },
+{	0,		TVDh_15_15_L,	TVDh_15_16_L,	TVDh_15_32_L},
+{	0,		TVDh_16_15_L,	TVDh_16_16_L,	TVDh_16_32_L},
+{	0,		TVDh_32_15_L,	TVDh_32_16_L,	TVDh_32_32_L},
+{	0,		TVDh_9_15_L ,	TVDh_9_16_L ,	TVDh_9_32_L }
+},{
+{	0,		TVDh_8_15_R ,	TVDh_8_16_R ,	TVDh_8_32_R },
+{	0,		TVDh_15_15_R,	TVDh_15_16_R,	TVDh_15_32_R},
+{	0,		TVDh_16_15_R,	TVDh_16_16_R,	TVDh_16_32_R},
+{	0,		TVDh_32_15_R,	TVDh_32_16_R,	TVDh_32_32_R},
+{	0,		TVDh_9_15_R ,	TVDh_9_16_R ,	TVDh_9_32_R }
+}};
+
 ScalerSimpleBlock_t ScaleTV3x = {
 	"TV3x",
 	GFX_CAN_15|GFX_CAN_16|GFX_CAN_32|GFX_RGBONLY,
@@ -357,6 +389,23 @@ ScalerSimpleBlock_t ScaleScan2x = {
 {	0,		Scan2x_16_15_R,	Scan2x_16_16_R,	Scan2x_16_32_R},
 {	0,		Scan2x_32_15_R,	Scan2x_32_16_R,	Scan2x_32_32_R},
 {	0,		Scan2x_9_15_R ,	Scan2x_9_16_R ,	Scan2x_9_32_R }
+}};
+
+ScalerSimpleBlock_t ScaleScanDh = {
+	"Scan2x",
+	GFX_CAN_15|GFX_CAN_16|GFX_CAN_32|GFX_RGBONLY,
+	1,2,{
+{	0,		ScanDh_8_15_L ,	ScanDh_8_16_L ,	ScanDh_8_32_L },
+{	0,		ScanDh_15_15_L,	ScanDh_15_16_L,	ScanDh_15_32_L},
+{	0,		ScanDh_16_15_L,	ScanDh_16_16_L,	ScanDh_16_32_L},
+{	0,		ScanDh_32_15_L,	ScanDh_32_16_L,	ScanDh_32_32_L},
+{	0,		ScanDh_9_15_L ,	ScanDh_9_16_L ,	ScanDh_9_32_L }
+},{
+{	0,		ScanDh_8_15_R ,	ScanDh_8_16_R ,	ScanDh_8_32_R },
+{	0,		ScanDh_15_15_R,	ScanDh_15_16_R,	ScanDh_15_32_R},
+{	0,		ScanDh_16_15_R,	ScanDh_16_16_R,	ScanDh_16_32_R},
+{	0,		ScanDh_32_15_R,	ScanDh_32_16_R,	ScanDh_32_32_R},
+{	0,		ScanDh_9_15_R ,	ScanDh_9_16_R ,	ScanDh_9_32_R }
 }};
 
 ScalerSimpleBlock_t ScaleScan3x = {
@@ -408,6 +457,74 @@ ScalerSimpleBlock_t ScaleRGB3x = {
 {	0,		RGB3x_16_15_R,	RGB3x_16_16_R,	RGB3x_16_32_R},
 {	0,		RGB3x_32_15_R,	RGB3x_32_16_R,	RGB3x_32_32_R},
 {	0,		RGB3x_9_15_R ,	RGB3x_9_16_R ,	RGB3x_9_32_R }
+}};
+
+ScalerSimpleBlock_t ScaleGrayNormal = {
+	"Gray2x",
+	GFX_CAN_15|GFX_CAN_16|GFX_CAN_32|GFX_RGBONLY,
+	1,1,{
+{	0,		GrayNormal_8_15_L ,	GrayNormal_8_16_L ,	GrayNormal_8_32_L },
+{	0,		GrayNormal_15_15_L,	GrayNormal_15_16_L,	GrayNormal_15_32_L},
+{	0,		GrayNormal_16_15_L,	GrayNormal_16_16_L,	GrayNormal_16_32_L},
+{	0,		GrayNormal_32_15_L,	GrayNormal_32_16_L,	GrayNormal_32_32_L},
+{	0,		GrayNormal_9_15_L ,	GrayNormal_9_16_L ,	GrayNormal_9_32_L }
+},{
+{	0,		GrayNormal_8_15_R ,	GrayNormal_8_16_R ,	GrayNormal_8_32_R },
+{	0,		GrayNormal_15_15_R,	GrayNormal_15_16_R,	GrayNormal_15_32_R},
+{	0,		GrayNormal_16_15_R,	GrayNormal_16_16_R,	GrayNormal_16_32_R},
+{	0,		GrayNormal_32_15_R,	GrayNormal_32_16_R,	GrayNormal_32_32_R},
+{	0,		GrayNormal_9_15_R ,	GrayNormal_9_16_R ,	GrayNormal_9_32_R }
+}};
+
+ScalerSimpleBlock_t ScaleGrayDw = {
+	"Gray2x",
+	GFX_CAN_15|GFX_CAN_16|GFX_CAN_32|GFX_RGBONLY,
+	2,1,{
+{	0,		GrayDw_8_15_L ,	GrayDw_8_16_L ,	GrayDw_8_32_L },
+{	0,		GrayDw_15_15_L,	GrayDw_15_16_L,	GrayDw_15_32_L},
+{	0,		GrayDw_16_15_L,	GrayDw_16_16_L,	GrayDw_16_32_L},
+{	0,		GrayDw_32_15_L,	GrayDw_32_16_L,	GrayDw_32_32_L},
+{	0,		GrayDw_9_15_L ,	GrayDw_9_16_L ,	GrayDw_9_32_L }
+},{
+{	0,		GrayDw_8_15_R ,	GrayDw_8_16_R ,	GrayDw_8_32_R },
+{	0,		GrayDw_15_15_R,	GrayDw_15_16_R,	GrayDw_15_32_R},
+{	0,		GrayDw_16_15_R,	GrayDw_16_16_R,	GrayDw_16_32_R},
+{	0,		GrayDw_32_15_R,	GrayDw_32_16_R,	GrayDw_32_32_R},
+{	0,		GrayDw_9_15_R ,	GrayDw_9_16_R ,	GrayDw_9_32_R }
+}};
+
+ScalerSimpleBlock_t ScaleGrayDh = {
+	"Gray2x",
+	GFX_CAN_15|GFX_CAN_16|GFX_CAN_32|GFX_RGBONLY,
+	1,2,{
+{	0,		GrayDh_8_15_L ,	GrayDh_8_16_L ,	GrayDh_8_32_L },
+{	0,		GrayDh_15_15_L,	GrayDh_15_16_L,	GrayDh_15_32_L},
+{	0,		GrayDh_16_15_L,	GrayDh_16_16_L,	GrayDh_16_32_L},
+{	0,		GrayDh_32_15_L,	GrayDh_32_16_L,	GrayDh_32_32_L},
+{	0,		GrayDh_9_15_L ,	GrayDh_9_16_L ,	GrayDh_9_32_L }
+},{
+{	0,		GrayDh_8_15_R ,	GrayDh_8_16_R ,	GrayDh_8_32_R },
+{	0,		GrayDh_15_15_R,	GrayDh_15_16_R,	GrayDh_15_32_R},
+{	0,		GrayDh_16_15_R,	GrayDh_16_16_R,	GrayDh_16_32_R},
+{	0,		GrayDh_32_15_R,	GrayDh_32_16_R,	GrayDh_32_32_R},
+{	0,		GrayDh_9_15_R ,	GrayDh_9_16_R ,	GrayDh_9_32_R }
+}};
+
+ScalerSimpleBlock_t ScaleGray2x = {
+	"Gray2x",
+	GFX_CAN_15|GFX_CAN_16|GFX_CAN_32|GFX_RGBONLY,
+	2,2,{
+{	0,		Gray2x_8_15_L ,	Gray2x_8_16_L ,	Gray2x_8_32_L },
+{	0,		Gray2x_15_15_L,	Gray2x_15_16_L,	Gray2x_15_32_L},
+{	0,		Gray2x_16_15_L,	Gray2x_16_16_L,	Gray2x_16_32_L},
+{	0,		Gray2x_32_15_L,	Gray2x_32_16_L,	Gray2x_32_32_L},
+{	0,		Gray2x_9_15_L ,	Gray2x_9_16_L ,	Gray2x_9_32_L }
+},{
+{	0,		Gray2x_8_15_R ,	Gray2x_8_16_R ,	Gray2x_8_32_R },
+{	0,		Gray2x_15_15_R,	Gray2x_15_16_R,	Gray2x_15_32_R},
+{	0,		Gray2x_16_15_R,	Gray2x_16_16_R,	Gray2x_16_32_R},
+{	0,		Gray2x_32_15_R,	Gray2x_32_16_R,	Gray2x_32_32_R},
+{	0,		Gray2x_9_15_R ,	Gray2x_9_16_R ,	Gray2x_9_32_R }
 }};
 #endif
 

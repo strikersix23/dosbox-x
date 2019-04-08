@@ -501,18 +501,42 @@ void RENDER_Reset( void ) {
             else if (render.scale.size == 3)
                 simpleBlock = &ScaleScan3x;
             break;
+        case scalerOpGray:
+            if (render.scale.size == 1){
+			        simpleBlock = &ScaleGrayNormal;
+            }else if (render.scale.size == 2){
+			        simpleBlock = &ScaleGray2x;
+            }
+        break;
         default:
             break;
         }
 #endif
     } else if (dblw && !render.scale.hardware) {
+      if(scalerOpGray == render.scale.op){
+        simpleBlock = &ScaleGrayDw;
+      }else{
         simpleBlock = &ScaleNormalDw;
+      }
     } else if (dblh && !render.scale.hardware) {
-        simpleBlock = &ScaleNormalDh;
+		//Check whether tv2x and scan2x is selected
+		if(scalerOpGray == render.scale.op){
+			simpleBlock = &ScaleGrayDh;
+    }else if(scalerOpTV == render.scale.op){
+			simpleBlock = &ScaleTVDh;
+        }else if(scalerOpScan == render.scale.op){
+			simpleBlock = &ScaleScanDh;
+        }else{
+			simpleBlock = &ScaleNormalDh;
+		}
     } else  {
 forcenormal:
         complexBlock = 0;
-        simpleBlock = &ScaleNormal1x;
+        if(scalerOpGray==render.scale.op){
+          simpleBlock = &ScaleGrayNormal;
+        }else{
+          simpleBlock = &ScaleNormal1x;
+        }
     }
     if (complexBlock) {
 #if RENDER_USE_ADVANCED_SCALERS>1
@@ -927,6 +951,8 @@ void RENDER_UpdateFromScalerSetting(void) {
     else if (scaler == "rgb3x"){ render.scale.op = scalerOpRGB; render.scale.size = 3; render.scale.hardware=false; }
     else if (scaler == "scan2x"){ render.scale.op = scalerOpScan; render.scale.size = 2; render.scale.hardware=false; }
     else if (scaler == "scan3x"){ render.scale.op = scalerOpScan; render.scale.size = 3; render.scale.hardware=false; }
+    else if (scaler == "gray"){ render.scale.op = scalerOpGray; render.scale.size = 1; render.scale.hardware=false; }
+    else if (scaler == "gray2x"){ render.scale.op = scalerOpGray; render.scale.size = 2; render.scale.hardware=false; }
 #endif
     else if (scaler == "hardware_none") { render.scale.op = scalerOpNormal; render.scale.size = 1; render.scale.hardware=true; }
     else if (scaler == "hardware2x") { render.scale.op = scalerOpNormal; render.scale.size = 4; render.scale.hardware=true; }
@@ -966,6 +992,26 @@ void RENDER_Init() {
 
     vga.draw.doublescan_set=section->Get_bool("doublescan");
     vga.draw.char9_set=section->Get_bool("char9");
+
+	//Set monochrome mode color and brightness
+	vga.draw.monochrome_pal=0;
+	vga.draw.monochrome_bright=1;
+  Prop_multival* prop = section->Get_multival("monochrome_pal");
+  std::string s_bright = prop->GetSection()->Get_string("bright");
+  std::string s_color = prop->GetSection()->Get_string("color");
+  LOG_MSG("monopal: %s, %s", s_color.c_str(), s_bright.c_str());
+	if("bright"==s_bright){
+		vga.draw.monochrome_bright=0;
+	}
+	if("green"==s_color){
+		vga.draw.monochrome_pal=0;
+	}else if("amber"==s_color){
+		vga.draw.monochrome_pal=1;
+	}else if("gray"==s_color){
+		vga.draw.monochrome_pal=2;
+	}else if("white"==s_color){
+		vga.draw.monochrome_pal=3;
+	}
 
     //For restarting the renderer.
     static bool running = false;

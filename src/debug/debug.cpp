@@ -2662,8 +2662,30 @@ static void LogDOSKernMem(void) {
 static void LogMCBS(void)
 {
     if (dos_kernel_disabled) {
-        LOG(LOG_MISC,LOG_ERROR)("Cannot enumerate MCB list while DOS kernel is inactive.");
-        return;
+        if (boothax == BOOTHAX_MSDOS) {
+            if (guest_msdos_LoL == 0 || guest_msdos_mcb_chain == 0) {
+                LOG(LOG_MISC,LOG_ERROR)("Cannot enumerate MCB list while DOS kernel is inactive, and DOSBox-X has not yet determined the MCB list of the guest MS-DOS operating system");
+                return;
+            }
+
+            DEBUG_BeginPagedContent();
+
+            try {
+                LOG(LOG_MISC,LOG_ERROR)("MCB Seg  Size (bytes)  PSP Seg (notes)  Filename");
+                LOG(LOG_MISC,LOG_ERROR)("Conventional memory:");
+                LogMCBChain(guest_msdos_mcb_chain);
+            }
+            catch (GuestPageFaultException &pf) {
+                LOG(LOG_MISC,LOG_ERROR)("(Enumeration caused page fault within the guest)");
+            }
+
+            DEBUG_EndPagedContent();
+            return;
+        }
+        else {
+            LOG(LOG_MISC,LOG_ERROR)("Cannot enumerate MCB list while DOS kernel is inactive.");
+            return;
+        }
     }
 
     DEBUG_BeginPagedContent();

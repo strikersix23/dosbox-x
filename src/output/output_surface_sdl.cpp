@@ -183,12 +183,14 @@ retry:
 #if DOSBOXMENU_TYPE == DOSBOXMENU_SDLDRAW
         if (mainMenu.isVisible())
         {
-            /* enforce a minimum 640x400 surface size.
-             * the menus are useless below 640x400 */
-            if (consider_width < (640 + (sdl.overscan_width * 2)))
-                consider_width = (640 + (sdl.overscan_width * 2));
-            if (consider_height < (400 + (sdl.overscan_width * 2) + (unsigned int)menuheight))
-                consider_height = (400 + (sdl.overscan_width * 2) + (unsigned int)menuheight);
+            extern unsigned int min_sdldraw_menu_width;
+            extern unsigned int min_sdldraw_menu_height;
+            /* enforce a minimum 500x300 surface size.
+             * the menus are useless below 500x300 */
+            if (consider_width < (min_sdldraw_menu_width + (sdl.overscan_width * 2)))
+                consider_width = (min_sdldraw_menu_width + (sdl.overscan_width * 2));
+            if (consider_height < (min_sdldraw_menu_height + (sdl.overscan_width * 2) + (unsigned int)menuheight))
+                consider_height = (min_sdldraw_menu_height + (sdl.overscan_width * 2) + (unsigned int)menuheight);
         }
 #endif
 
@@ -345,6 +347,7 @@ retry:
 
 #if DOSBOXMENU_TYPE == DOSBOXMENU_SDLDRAW
     mainMenu.screenWidth = (size_t)sdl.surface->w;
+    mainMenu.screenHeight = (size_t)sdl.surface->h;
     mainMenu.updateRect();
     mainMenu.setRedraw();
     GFX_DrawSDLMenu(mainMenu, mainMenu.display_list);
